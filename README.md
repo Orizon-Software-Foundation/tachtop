@@ -1,2 +1,1 @@
-# OSFtop
-A btop like application for the Linux terminal made by the Orizon Software Foundation under GPL
+AIMING TO RELEASE THIS WEEK 20/10/26
