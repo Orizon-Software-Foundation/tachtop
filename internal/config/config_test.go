@@ -82,6 +82,34 @@ func TestLoadMalformed(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"theme":"nord","refesh_ms":500}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for a misspelled field")
+	}
+	if cfg != Default() {
+		t.Errorf("unknown field should fall back to defaults, got %+v", cfg)
+	}
+}
+
+func TestLoadTrimsTheme(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"theme":"  nord  "}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Theme != "nord" {
+		t.Errorf("Theme = %q, want nord", cfg.Theme)
+	}
+}
+
 func TestPathHonoursEnv(t *testing.T) {
 	want := filepath.Join(t.TempDir(), "custom.json")
 	t.Setenv("TACHTOP_CONFIG", want)

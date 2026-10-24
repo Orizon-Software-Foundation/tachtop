@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/config"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/theme"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/config"
-	"github.com/tachtop/tachtop/internal/metrics"
-	"github.com/tachtop/tachtop/internal/theme"
 )
 
 type sortMode int
@@ -38,9 +38,10 @@ func (s sortMode) String() string {
 
 // Options configures the UI.
 type Options struct {
-	Config  config.Config
-	Theme   theme.Theme
-	Version string
+	Config     config.Config
+	Theme      theme.Theme
+	Version    string
+	ConfigPath string
 }
 
 // Model is the Bubble Tea application state.
@@ -48,6 +49,7 @@ type Model struct {
 	cfg     config.Config
 	pal     theme.Theme
 	version string
+	cfgPath string
 
 	collector *metrics.Collector
 	width     int
@@ -59,7 +61,6 @@ type Model struct {
 	paused     bool
 	collectSeq int
 	tickSeq    int
-	snapErr    string
 
 	histCPU  series
 	histMem  series
@@ -79,10 +80,10 @@ type Model struct {
 
 	helpOpen bool
 
-	detailsOpen    bool
-	detailsLoading bool
-	detailsPID     int32
-	details        *metrics.ProcDetails
+	detailsOpen   bool
+	detailsPID    int32
+	details       *metrics.ProcDetails
+	detailsOffset int
 
 	kill *metrics.Proc
 
@@ -91,9 +92,16 @@ type Model struct {
 	toastSeq int
 }
 
-// New builds the initial model. Creating the collector primes the kernel
-// counters before the first frame, so rates are meaningful immediately.
+// New builds the initial model. The collector reads static host information
+// here; the first asynchronous collection establishes the rate baselines, so
+// startup never blocks on slow hardware probes.
 func New(opts Options) Model {
+	cfg := opts.Config
+	if cfg.RefreshMS <= 0 {
+		cfg.RefreshMS = config.DefaultRefreshMS
+	}
+	cfg.RefreshMS = clampInt(cfg.RefreshMS, config.MinRefreshMS, config.MaxRefreshMS)
+
 	ti := textinput.New()
 	ti.Placeholder = "name or pid"
 	ti.CharLimit = 80
@@ -103,9 +111,10 @@ func New(opts Options) Model {
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(opts.Theme.Accent)
 
 	return Model{
-		cfg:         opts.Config,
+		cfg:         cfg,
 		pal:         opts.Theme,
 		version:     opts.Version,
+		cfgPath:     opts.ConfigPath,
 		collector:   metrics.New(),
 		histCPU:     newSeries(150),
 		histMem:     newSeries(150),
@@ -157,10 +166,26 @@ func (m Model) collectCmd() tea.Cmd {
 	}
 }
 
+// resetAndCollectCmd clears the paused baselines and takes a fresh snapshot in
+// the background. The collector serializes the reset and collection, and doing
+// this off the UI goroutine keeps the interface responsive.
+func (m Model) resetAndCollectCmd() tea.Cmd {
+	seq := m.collectSeq
+	collector := m.collector
+	return func() tea.Msg {
+		return snapshotMsg{seq: seq, snap: collector.CollectAfterReset()}
+	}
+}
+
 func (m *Model) scheduleTick() tea.Cmd {
 	m.tickSeq++
 	seq := m.tickSeq
-	interval := time.Duration(m.cfg.RefreshMS) * time.Millisecond
+	ms := m.cfg.RefreshMS
+	if ms <= 0 {
+		ms = config.DefaultRefreshMS
+	}
+	ms = clampInt(ms, config.MinRefreshMS, config.MaxRefreshMS)
+	interval := time.Duration(ms) * time.Millisecond
 	return tea.Tick(interval, func(time.Time) tea.Msg {
 		return tickMsg{seq: seq}
 	})
@@ -192,7 +217,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailsMsg:
 		if m.detailsOpen && msg.pid == m.detailsPID {
 			m.details = &msg.details
-			m.detailsLoading = false
 		}
 		return m, nil
 
@@ -227,7 +251,6 @@ func (m Model) applySnapshot(snap metrics.Snapshot) (tea.Model, tea.Cmd) {
 	m.collecting = false
 	m.hasSnap = true
 	m.snap = snap
-	m.snapErr = snap.Err
 
 	m.histCPU.add(snap.CPUPercent)
 	if snap.MemTotal > 0 {
@@ -257,10 +280,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "y", "Y":
 			force := key == "Y"
-			pid, name := m.kill.PID, m.kill.Name
+			pid, name, created := m.kill.PID, m.kill.Name, m.kill.Created
+			collector := m.collector
 			m.kill = nil
 			return m, func() tea.Msg {
-				return actionMsg{pid: pid, name: name, force: force, err: metrics.Signal(pid, force)}
+				return actionMsg{
+					pid:   pid,
+					name:  name,
+					force: force,
+					err:   collector.SignalChecked(pid, created, force),
+				}
 			}
 		case "n", "esc":
 			m.kill = nil
@@ -277,8 +306,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.detailsOpen {
-		if key == "esc" || key == "q" || key == "enter" {
+		switch key {
+		case "esc", "q", "enter":
 			m.closeDetails()
+		case "up":
+			m.scrollDetails(-1)
+		case "down":
+			m.scrollDetails(1)
+		case "pgup", "ctrl+b":
+			m.scrollDetails(-m.detailsPage())
+		case "pgdown", "ctrl+f":
+			m.scrollDetails(m.detailsPage())
+		case "home":
+			m.detailsOffset = 0
+		case "end":
+			m.scrollDetails(1 << 30)
 		}
 		return m, nil
 	}
@@ -361,10 +403,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.filtering || m.helpOpen || m.detailsOpen || m.kill != nil {
+	if msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
-	if msg.Action != tea.MouseActionPress {
+	if m.detailsOpen {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.scrollDetails(-3)
+		case tea.MouseButtonWheelDown:
+			m.scrollDetails(3)
+		}
+		return m, nil
+	}
+	if m.filtering || m.helpOpen || m.kill != nil {
 		return m, nil
 	}
 	switch msg.Button {
@@ -384,10 +435,12 @@ func (m *Model) togglePause() tea.Cmd {
 		return m.flash("Paused", false)
 	}
 
-	m.collector.Reset()
+	// Reset and Collect run in the background. The collector serializes them,
+	// so an in-flight snapshot cannot race the reset, and the UI stays
+	// responsive while the old collection finishes.
 	m.collectSeq++
 	m.collecting = true
-	return tea.Batch(m.collectCmd(), m.flash("Resumed", false))
+	return tea.Batch(m.resetAndCollectCmd(), m.flash("Resumed", false))
 }
 
 func (m *Model) beginFilter() {
@@ -408,9 +461,9 @@ func (m *Model) openDetails() tea.Cmd {
 		m.selectedPID = pid
 	}
 	m.detailsOpen = true
-	m.detailsLoading = true
 	m.details = nil
 	m.detailsPID = pid
+	m.detailsOffset = 0
 	return func() tea.Msg {
 		return detailsMsg{pid: pid, details: metrics.Details(pid)}
 	}
@@ -418,9 +471,9 @@ func (m *Model) openDetails() tea.Cmd {
 
 func (m *Model) closeDetails() {
 	m.detailsOpen = false
-	m.detailsLoading = false
 	m.details = nil
 	m.detailsPID = 0
+	m.detailsOffset = 0
 }
 
 func (m *Model) beginKill() tea.Cmd {

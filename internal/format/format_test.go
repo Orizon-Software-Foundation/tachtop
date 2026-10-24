@@ -65,15 +65,6 @@ func TestRate(t *testing.T) {
 	}
 }
 
-func TestPercent(t *testing.T) {
-	if got := Percent(42.24); got != "42.2%" {
-		t.Errorf("Percent = %q", got)
-	}
-	if got := PercentWhole(42.6); got != "43%" {
-		t.Errorf("PercentWhole = %q", got)
-	}
-}
-
 func TestDurationShort(t *testing.T) {
 	tests := []struct {
 		in   time.Duration
@@ -103,30 +94,14 @@ func TestTemperature(t *testing.T) {
 	if got := Temperature(60, "F"); got != "140°F" {
 		t.Errorf("Temperature f = %q", got)
 	}
-	if got := Temperature(0, "c"); got != "–" {
+	if got := Temperature(0, "c"); got != "0°C" {
 		t.Errorf("Temperature zero = %q", got)
+	}
+	if got := Temperature(-5, "c"); got != "-5°C" {
+		t.Errorf("Temperature negative = %q", got)
 	}
 	if got := Temperature(200, "c"); got != "–" {
 		t.Errorf("Temperature out of range = %q", got)
-	}
-}
-
-func TestTruncate(t *testing.T) {
-	tests := []struct {
-		s     string
-		width int
-		want  string
-	}{
-		{"hello", 5, "hello"},
-		{"hello", 4, "hel…"},
-		{"hello", 1, "…"},
-		{"hello", 0, ""},
-		{"héllo", 4, "hél…"},
-	}
-	for _, tt := range tests {
-		if got := Truncate(tt.s, tt.width); got != tt.want {
-			t.Errorf("Truncate(%q, %d) = %q, want %q", tt.s, tt.width, got, tt.want)
-		}
 	}
 }
 
@@ -141,5 +116,12 @@ func TestWrap(t *testing.T) {
 	want = []string{"abcd", "efgh", "ij"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("Wrap long word = %#v, want %#v", got, want)
+	}
+
+	// Wide runes occupy two cells each.
+	got = Wrap("你好世界", 4)
+	want = []string{"你好", "世界"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("Wrap wide runes = %#v, want %#v", got, want)
 	}
 }

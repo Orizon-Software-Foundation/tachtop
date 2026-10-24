@@ -14,11 +14,8 @@ import (
 type procStat struct {
 	name       string
 	state      string
-	ppid       int32
 	cpuSeconds float64
-	threads    int32
 	startTicks uint64
-	vmsBytes   uint64
 	rssPages   uint64
 }
 
@@ -46,13 +43,10 @@ func readProcStat(pid int32) (procStat, error) {
 		return ps, fmt.Errorf("short %s: %d fields", path, len(fields))
 	}
 	ps.state = fields[0]
-	ps.ppid = parseInt32(fields[1])
 	utime := parseUint64(fields[11])
 	stime := parseUint64(fields[12])
 	ps.cpuSeconds = float64(utime+stime) / userHZ
-	ps.threads = parseInt32(fields[17])
 	ps.startTicks = parseUint64(fields[19])
-	ps.vmsBytes = parseUint64(fields[20])
 	ps.rssPages = parseUint64(fields[21])
 	return ps, nil
 }
@@ -100,26 +94,18 @@ func (c *Collector) collectProcs(now time.Time, memTotal uint64) ([]Proc, int, e
 
 		procs = append(procs, Proc{
 			PID:        pid,
-			PPID:       ps.ppid,
 			Name:       ps.name,
 			User:       c.userFor(pid),
 			State:      ps.state,
 			CPU:        usage,
 			MemPercent: memPercent,
 			RSS:        rss,
-			VMS:        ps.vmsBytes,
-			Threads:    ps.threads,
 			Created:    created,
 		})
 	}
 
 	c.prevProcs = next
 	return procs, count, nil
-}
-
-func parseInt32(s string) int32 {
-	v, _ := strconv.ParseInt(s, 10, 32)
-	return int32(v)
 }
 
 func parseUint64(s string) uint64 {

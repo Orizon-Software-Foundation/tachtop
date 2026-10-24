@@ -4,6 +4,7 @@ package theme
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -17,13 +18,12 @@ type Theme struct {
 	Name        string
 	Description string
 
-	Accent    lipgloss.Color
-	Secondary lipgloss.Color
-	Good      lipgloss.Color
-	Warn      lipgloss.Color
-	Bad       lipgloss.Color
-	Dim       lipgloss.Color
-	Border    lipgloss.Color
+	Accent lipgloss.Color
+	Good   lipgloss.Color
+	Warn   lipgloss.Color
+	Bad    lipgloss.Color
+	Dim    lipgloss.Color
+	Border lipgloss.Color
 
 	// Ramp is used for graph gradients, from low (bottom) to high (top).
 	Ramp []lipgloss.Color
@@ -44,9 +44,8 @@ func (t Theme) Severity(p float64) lipgloss.Color {
 var themes = []Theme{
 	{
 		Name:        "tachtop",
-		Description: "teal and violet",
+		Description: "teal and warm accents",
 		Accent:      "#2CB1CF",
-		Secondary:   "#A78BFA",
 		Good:        "#4ADE80",
 		Warn:        "#FBBF24",
 		Bad:         "#F87171",
@@ -58,7 +57,6 @@ var themes = []Theme{
 		Name:        "dracula",
 		Description: "the classic dark palette",
 		Accent:      "#8BE9FD",
-		Secondary:   "#BD93F9",
 		Good:        "#50FA7B",
 		Warn:        "#F1FA8C",
 		Bad:         "#FF5555",
@@ -70,7 +68,6 @@ var themes = []Theme{
 		Name:        "gruvbox",
 		Description: "warm, earthy colours",
 		Accent:      "#83A598",
-		Secondary:   "#D3869B",
 		Good:        "#B8BB26",
 		Warn:        "#FABD2F",
 		Bad:         "#FB4934",
@@ -82,7 +79,6 @@ var themes = []Theme{
 		Name:        "nord",
 		Description: "cool arctic blues",
 		Accent:      "#88C0D0",
-		Secondary:   "#B48EAD",
 		Good:        "#A3BE8C",
 		Warn:        "#EBCB8B",
 		Bad:         "#BF616A",
@@ -94,7 +90,6 @@ var themes = []Theme{
 		Name:        "light",
 		Description: "for light terminal backgrounds",
 		Accent:      "#0969DA",
-		Secondary:   "#8250DF",
 		Good:        "#1A7F37",
 		Warn:        "#9A6700",
 		Bad:         "#CF222E",
@@ -113,21 +108,29 @@ func Names() []string {
 	return out
 }
 
-// All returns a copy of the built-in themes.
+// All returns a deep copy of the built-in themes. Ramp is a slice, so a
+// shallow copy would let callers mutate the package's palettes.
 func All() []Theme {
 	out := make([]Theme, len(themes))
-	copy(out, themes)
+	for i, t := range themes {
+		out[i] = t
+		out[i].Ramp = append([]lipgloss.Color(nil), t.Ramp...)
+	}
 	return out
 }
 
 // Get looks up a theme by name (case-insensitive).
 func Get(name string) (Theme, bool) {
+	name = strings.TrimSpace(name)
 	for _, t := range themes {
 		if strings.EqualFold(t.Name, name) {
+			t.Ramp = append([]lipgloss.Color(nil), t.Ramp...)
 			return t, true
 		}
 	}
-	return themes[0], false
+	fallback := themes[0]
+	fallback.Ramp = append([]lipgloss.Color(nil), fallback.Ramp...)
+	return fallback, false
 }
 
 // RampColor returns the colour at position t (0..1) along a gradient.
@@ -138,7 +141,7 @@ func RampColor(ramp []lipgloss.Color, t float64) lipgloss.Color {
 	if len(ramp) == 1 {
 		return ramp[0]
 	}
-	if t < 0 {
+	if math.IsNaN(t) || t < 0 {
 		t = 0
 	}
 	if t > 1 {
@@ -158,6 +161,9 @@ func RampColor(ramp []lipgloss.Color, t float64) lipgloss.Color {
 func Blend(a, b string, t float64) string {
 	ar, ag, ab, okA := parseHex(a)
 	br, bg, bb, okB := parseHex(b)
+	if math.IsNaN(t) {
+		t = 0
+	}
 	if !okA || !okB {
 		if t < 0.5 {
 			return a

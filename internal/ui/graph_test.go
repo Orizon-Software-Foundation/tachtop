@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/theme"
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -86,6 +86,21 @@ func TestRenderGraph(t *testing.T) {
 	}
 	if got := RenderGraph(nil, 4, 0, 10, th.Ramp); got != nil {
 		t.Errorf("zero height should return nil, got %v", got)
+	}
+
+	empty := RenderGraph(nil, 10, 2, 10, th.Ramp)
+	for i, line := range empty {
+		if plain(line) != strings.Repeat(" ", 10) {
+			t.Errorf("empty graph row %d = %q", i, plain(line))
+		}
+	}
+
+	single := RenderGraph([]float64{50}, 10, 2, 100, th.Ramp)
+	if plain(single[1])[0] != ' ' {
+		t.Errorf("single sample should not span the graph: %q", plain(single[1]))
+	}
+	if plain(single[1])[9] == ' ' {
+		t.Errorf("single sample should appear at the right edge: %q", plain(single[1]))
 	}
 }
 

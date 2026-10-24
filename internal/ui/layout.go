@@ -20,7 +20,6 @@ type screenLayout struct {
 	proc box
 
 	showDisk bool
-	showNet  bool
 	showGPU  bool
 }
 
@@ -61,7 +60,6 @@ func (m Model) layout() screenLayout {
 		l.disk = box{diskW, bodyH - topH - gpuH}
 		l.proc = box{m.width - diskW, bodyH - topH - gpuH}
 		l.showDisk = true
-		l.showNet = true
 		l.showGPU = gpuH > 0
 
 	case m.width >= 84 && bodyH >= 22:
@@ -85,7 +83,6 @@ func (m Model) layout() screenLayout {
 		l.disk = box{diskW, bodyH - topH - gpuH}
 		l.proc = box{m.width - diskW, bodyH - topH - gpuH}
 		l.showDisk = true
-		l.showNet = true
 		l.showGPU = gpuH > 0
 
 	default:
@@ -121,7 +118,6 @@ func (m Model) layout() screenLayout {
 		l.gpu = box{m.width, gpuH}
 		l.proc = box{m.width, procH}
 		l.showDisk = false
-		l.showNet = true
 		l.showGPU = gpuH > 0
 	}
 	return l

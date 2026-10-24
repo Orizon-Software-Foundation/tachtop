@@ -26,7 +26,6 @@ type Snapshot struct {
 	MemAvailable uint64
 	MemFree      uint64
 	MemCached    uint64
-	MemBuffers   uint64
 	SwapTotal    uint64
 	SwapUsed     uint64
 
@@ -49,21 +48,16 @@ type Snapshot struct {
 
 // Network holds throughput for one interface.
 type Network struct {
-	Name    string
-	Rx      float64
-	Tx      float64
-	RxTotal uint64
-	TxTotal uint64
+	Name string
+	Rx   float64
+	Tx   float64
 }
 
 // Disk holds usage for one mounted filesystem.
 type Disk struct {
 	Mount       string
-	Device      string
-	FSType      string
 	Total       uint64
 	Used        uint64
-	Free        uint64
 	UsedPercent float64
 }
 
@@ -71,11 +65,9 @@ type Disk struct {
 // every statistic for every vendor, so the Has* flags distinguish "zero" from
 // "not available".
 type GPU struct {
-	Index   int
-	Name    string
-	Vendor  string
-	Driver  string
-	PCISlot string
+	Index  int
+	Name   string
+	Vendor string
 
 	UtilPercent float64
 	HasUtil     bool
@@ -96,17 +88,16 @@ type GPU struct {
 }
 
 // Proc is the subset of process information shown in the process table.
+// Created is the process start time in Unix seconds; it is used to make sure
+// a kill signal cannot hit a different process that reused the PID.
 type Proc struct {
 	PID        int32
-	PPID       int32
 	Name       string
 	User       string
 	State      string
 	CPU        float64
 	MemPercent float64
 	RSS        uint64
-	VMS        uint64
-	Threads    int32
 	Created    int64
 }
 
