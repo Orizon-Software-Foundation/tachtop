@@ -256,4 +256,5 @@ and [Lip Gloss](https://github.com/charmbracelet/lipgloss).
 
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE).
+Licensed under the European Union Public Licence v. 1.2 (EUPL-1.2).
+See [LICENSE](LICENSE).
