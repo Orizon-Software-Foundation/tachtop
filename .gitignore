@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+# tachtop binary
+/tachtop
+
 # Test binary, built with `go test -c`
 *.test
 

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=tachtop
+GenericName=System Monitor
+Comment=Fast, friendly terminal system monitor
+Exec=tachtop
+Icon=utilities-system-monitor
+Terminal=true
+Categories=System;Monitor;ConsoleOnly;
+Keywords=system;monitor;process;cpu;memory;network;disk;top;btop;htop;
+StartupNotify=false
