@@ -68,6 +68,35 @@ func TestViewTooSmallFits(t *testing.T) {
 	}
 }
 
+func TestCPUStatsIncludePower(t *testing.T) {
+	th, _ := theme.Get("tachtop")
+	m := Model{
+		pal: th,
+		cfg: config.Config{TempUnit: "c"},
+		snap: metrics.Snapshot{
+			CPUCores:    8,
+			CPUMHz:      2400,
+			CPUTemp:     61,
+			CPUPower:    45.2,
+			HasCPUPower: true,
+			CPUPercent:  12,
+		},
+		histCPU: newSeries(150),
+	}
+	lines := plain(strings.Join(m.cpuLines(80, 14), "\n"))
+	for _, want := range []string{"8 cores", "2.4 GHz", "61°C", "45W"} {
+		if !strings.Contains(lines, want) {
+			t.Errorf("CPU stats missing %q: %q", want, lines)
+		}
+	}
+
+	m.snap.HasCPUPower = false
+	lines = plain(strings.Join(m.cpuLines(80, 14), "\n"))
+	if strings.Contains(lines, "45W") {
+		t.Errorf("unavailable CPU power should be hidden: %q", lines)
+	}
+}
+
 func TestHelpFitsMinimumTerminal(t *testing.T) {
 	th, _ := theme.Get("tachtop")
 	m := Model{width: 64, height: 22, pal: th}
