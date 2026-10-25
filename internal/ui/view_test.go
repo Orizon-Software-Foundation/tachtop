@@ -68,6 +68,15 @@ func TestViewTooSmallFits(t *testing.T) {
 	}
 }
 
+func TestHelpFitsMinimumTerminal(t *testing.T) {
+	th, _ := theme.Get("tachtop")
+	m := Model{width: 64, height: 22, pal: th}
+	got := plain(m.helpPanel())
+	if !strings.Contains(got, "Themes:") {
+		t.Fatalf("help content is clipped at the minimum terminal size: %q", got)
+	}
+}
+
 func TestNewNormalizesRefresh(t *testing.T) {
 	th, _ := theme.Get("tachtop")
 	m := New(Options{Config: config.Config{RefreshMS: 1}, Theme: th})
