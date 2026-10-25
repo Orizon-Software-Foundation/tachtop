@@ -430,13 +430,13 @@ func (m Model) netLines(w, h int) []string {
 
 	netIfaces := m.snap.Networks
 
-	// Reserve a third of the panel for the graph when there is room, but keep
-	// at least one interface row and one header row.
-	graphH := 0
-	if innerH >= 8 {
-		graphH = clampInt(innerH/3, 3, innerH-4)
+	// Interface rows: name + rates by default; add cumulative bytes on wider
+	// panels, and MTU / errors / flags only when there's genuinely room.
+	ifaceBudget := innerH - 1 // leave room for the headline
+	if innerH >= 6 {
+		ifaceBudget = innerH - 3 // keep at least a couple of rows for the graph
 	}
-	ifaceBudget := maxInt(1, innerH-1-graphH)
+	ifaceBudget = maxInt(1, ifaceBudget)
 
 	shown := 0
 	for _, n := range netIfaces {
@@ -447,11 +447,13 @@ func (m Model) netLines(w, h int) []string {
 		shown++
 	}
 
-	// Graph section: per-interface mini-graphs when there is enough height,
-	// otherwise the aggregate graph.
+	// Graph section: the aggregate graph gets all remaining height. Per-interface
+	// mini-graphs only appear when there is generous space (tall and wide).
 	remaining := innerH - len(lines)
-	if remaining > 0 {
-		if graphH > 0 && len(netIfaces) > 0 {
+	if remaining >= 2 {
+		usePerIface := remaining >= 6 && innerW >= 55 &&
+			len(netIfaces) > 0 && len(netIfaces) <= 4
+		if usePerIface {
 			lines = append(lines, m.netPerIfaceGraphs(netIfaces, innerW, remaining)...)
 		} else {
 			max := AutoMax(m.histNet.data(), 1024)
@@ -459,9 +461,9 @@ func (m Model) netLines(w, h int) []string {
 		}
 	}
 
-	// Connections section when there is spare room.
+	// Connections section only when there is truly spare room: tall and wide.
 	remaining = innerH - len(lines)
-	if remaining >= 3 {
+	if remaining >= 4 && innerW >= 60 && len(m.snap.Connections) > 0 {
 		lines = append(lines, m.netConnSection(innerW, remaining)...)
 	}
 
@@ -469,22 +471,31 @@ func (m Model) netLines(w, h int) []string {
 }
 
 func (m Model) netIfaceRow(n metrics.Network, width int) string {
-	name := truncate(clean(n.Name), 12)
+	name := truncate(clean(n.Name), 10)
 	rx := m.goodText("↓ " + format.Rate(n.Rx))
 	tx := m.accentText("↑ " + format.Rate(n.Tx))
-	total := m.dimText(format.Bytes(n.BytesRecv + n.BytesSent))
-	parts := []string{name, rx, tx, total}
 
-	if n.MTU > 0 {
-		parts = append(parts, m.dimText(fmt.Sprintf("MTU %d", n.MTU)))
+	parts := []string{name, rx, tx}
+
+	// Cumulative bytes when there's room.
+	if width >= 44 {
+		parts = append(parts, m.dimText(format.Bytes(n.BytesRecv+n.BytesSent)))
 	}
-	if n.ErrsIn+n.ErrsOut+n.DropsIn+n.DropsOut > 0 {
-		parts = append(parts, m.badText(fmt.Sprintf("E%d/D%d",
-			n.ErrsIn+n.ErrsOut, n.DropsIn+n.DropsOut)))
+
+	// MTU, errors, drops and flags only on wide panels.
+	if width >= 66 {
+		if n.MTU > 0 {
+			parts = append(parts, m.dimText(fmt.Sprintf("MTU %d", n.MTU)))
+		}
+		if n.ErrsIn+n.ErrsOut+n.DropsIn+n.DropsOut > 0 {
+			parts = append(parts, m.badText(fmt.Sprintf("E%d/D%d",
+				n.ErrsIn+n.ErrsOut, n.DropsIn+n.DropsOut)))
+		}
+		if n.Flags != "" {
+			parts = append(parts, m.dimText(n.Flags))
+		}
 	}
-	if n.Flags != "" {
-		parts = append(parts, m.dimText(n.Flags))
-	}
+
 	return fit(strings.Join(parts, "  "), width)
 }
 
@@ -493,8 +504,11 @@ func (m Model) netPerIfaceGraphs(ifaces []metrics.Network, width, height int) []
 		return nil
 	}
 	count := len(ifaces)
-	if count > height/2 {
-		count = height / 2
+	if count > height/3 {
+		count = height / 3
+	}
+	if count == 0 {
+		count = 1
 	}
 	per := height / count
 	if per < 2 {
@@ -513,8 +527,8 @@ func (m Model) netPerIfaceGraphs(ifaces []metrics.Network, width, height int) []
 			break
 		}
 		data := m.histNet.data()
-		if h, ok := m.netHist[n.Name]; ok && h != nil {
-			data = h.data()
+		if hs, ok := m.netHist[n.Name]; ok && hs != nil {
+			data = hs.data()
 		}
 		if len(data) == 0 {
 			data = m.histNet.data()
@@ -531,7 +545,7 @@ func (m Model) netPerIfaceGraphs(ifaces []metrics.Network, width, height int) []
 
 func (m Model) netConnSection(width, height int) []string {
 	var lines []string
-	if height < 2 || len(m.snap.Connections) == 0 {
+	if height < 3 || len(m.snap.Connections) == 0 {
 		return lines
 	}
 	lines = append(lines, m.dimText("CONNECTIONS"))
@@ -541,13 +555,13 @@ func (m Model) netConnSection(width, height int) []string {
 		if shown >= rows {
 			break
 		}
-		local := truncate(clean(c.Local), 20)
-		remote := truncate(clean(c.Remote), 20)
+		local := truncate(clean(c.Local), 18)
+		remote := truncate(clean(c.Remote), 18)
 		state := c.State
 		if state == "" {
 			state = "-"
 		}
-		line := fmt.Sprintf("%-4s %-20s -> %-20s %s", c.Proto, local, remote, state)
+		line := fmt.Sprintf("%-4s %-18s -> %-18s %s", c.Proto, local, remote, state)
 		lines = append(lines, fit(line, width))
 		shown++
 	}
