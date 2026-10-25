@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -260,6 +261,7 @@ func (c *Collector) collectLocked() Snapshot {
 	s.Disks = c.collectDisks()
 	s.DiskRead, s.DiskWrite = c.collectDiskIO(dt, first)
 	s.GPUs = c.collectGPUs(now)
+	s.Connections = Connections()
 
 	procs, count, err := c.collectProcs(now, s.MemTotal)
 	if err != nil {
@@ -300,10 +302,25 @@ func (c *Collector) collectNet(dt float64, first bool) ([]Network, float64, floa
 			}
 		}
 		rates[n.Name] = [2]float64{rx, tx}
-		if n.BytesRecv == 0 && n.BytesSent == 0 {
-			continue
+
+		iface := Network{
+			Name:        n.Name,
+			Rx:          rx,
+			Tx:          tx,
+			BytesRecv:   n.BytesRecv,
+			BytesSent:   n.BytesSent,
+			PacketsRecv: n.PacketsRecv,
+			PacketsSent: n.PacketsSent,
+			ErrsIn:      n.Errin,
+			ErrsOut:     n.Errout,
+			DropsIn:     n.Dropin,
+			DropsOut:    n.Dropout,
 		}
-		out = append(out, Network{Name: n.Name, Rx: rx, Tx: tx})
+		if inf, err := net.InterfaceByName(n.Name); err == nil {
+			iface.MTU = inf.MTU
+			iface.Flags = interfaceFlags(inf.Flags)
+		}
+		out = append(out, iface)
 	}
 	c.prevNet = next
 
@@ -332,6 +349,30 @@ func (c *Collector) collectNet(dt float64, first bool) ([]Network, float64, floa
 		return out[i].Name < out[j].Name
 	})
 	return out, totalRx, totalTx
+}
+
+// interfaceFlags converts net.Flags to a comma-separated list of names.
+func interfaceFlags(f net.Flags) string {
+	var parts []string
+	if f&net.FlagUp != 0 {
+		parts = append(parts, "UP")
+	}
+	if f&net.FlagBroadcast != 0 {
+		parts = append(parts, "BROADCAST")
+	}
+	if f&net.FlagLoopback != 0 {
+		parts = append(parts, "LOOPBACK")
+	}
+	if f&net.FlagPointToPoint != 0 {
+		parts = append(parts, "POINTTOPOINT")
+	}
+	if f&net.FlagMulticast != 0 {
+		parts = append(parts, "MULTICAST")
+	}
+	if f&net.FlagRunning != 0 {
+		parts = append(parts, "RUNNING")
+	}
+	return strings.Join(parts, ",")
 }
 
 // defaultRouteInterfaces returns the interfaces that carry a default route.

@@ -43,16 +43,48 @@ type Snapshot struct {
 	Procs     []Proc
 	ProcCount int
 
+	// Connections are the active TCP/UDP sockets observed from /proc/net/*.
+	Connections []Connection
+
 	// Err contains a human-readable warning for a partial snapshot.
 	// tachtop keeps running when this is set.
 	Err string
 }
 
-// Network holds throughput for one interface.
+// Network holds throughput and counters for one interface.
 type Network struct {
 	Name string
-	Rx   float64
-	Tx   float64
+
+	// Rates (bytes per second).
+	Rx float64
+	Tx float64
+
+	// Cumulative counters (bytes).
+	BytesRecv uint64
+	BytesSent uint64
+
+	// Cumulative packet/error/drop counters.
+	PacketsRecv uint64
+	PacketsSent uint64
+	ErrsIn      uint64
+	ErrsOut     uint64
+	DropsIn     uint64
+	DropsOut    uint64
+
+	// MTU in bytes; 0 when unknown.
+	MTU int
+
+	// Flags is a comma-separated list of interface flags (e.g. "UP,BROADCAST,RUNNING,MULTICAST").
+	Flags string
+}
+
+// Connection is one active TCP/UDP socket observed from /proc/net/*.
+type Connection struct {
+	Proto  string // tcp, tcp4, tcp6, udp, udp4, udp6
+	Local  string // "ip:port"
+	Remote string // "ip:port"
+	State  string // e.g. ESTABLISHED, LISTEN ("-" for UDP)
+	Inode  uint64
 }
 
 // Disk holds usage for one mounted filesystem.

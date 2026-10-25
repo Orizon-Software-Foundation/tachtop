@@ -129,3 +129,62 @@ func TestHelpShowsLoadedConfigPath(t *testing.T) {
 		t.Fatalf("help does not show config path: %q", got)
 	}
 }
+
+func TestNetLinesFit(t *testing.T) {
+	th, _ := theme.Get("tachtop")
+	m := Model{
+		width:   100,
+		height:  24,
+		pal:     th,
+		hasSnap: true,
+		snap: metrics.Snapshot{
+			NetRx: 12345,
+			NetTx: 6789,
+			Networks: []metrics.Network{
+				{Name: "eth0", Rx: 1000, Tx: 2000, BytesRecv: 1 << 30, BytesSent: 2 << 30, MTU: 1500, Flags: "UP,BROADCAST,RUNNING,MULTICAST"},
+				{Name: "wlan0", Rx: 500, Tx: 100, BytesRecv: 512, BytesSent: 256, MTU: 1400, Flags: "UP,BROADCAST,MULTICAST"},
+				{Name: "lo", Rx: 10, Tx: 10, BytesRecv: 0, BytesSent: 0, MTU: 65536},
+			},
+		},
+		histNet: newSeries(150),
+		netHist: map[string]*series{
+			"eth0":  {limit: 150, values: []float64{1, 2, 3, 4, 5}},
+			"wlan0": {limit: 150, values: []float64{5, 4, 3, 2, 1}},
+		},
+	}
+	for h := 6; h <= 40; h++ {
+		lines := m.netLines(100, h)
+		for _, line := range lines {
+			if lipgloss.Width(line) > 100 {
+				t.Fatalf("height %d: line too wide: %q", h, line)
+			}
+		}
+	}
+}
+
+func TestNetPerIfaceGraphs(t *testing.T) {
+	th, _ := theme.Get("tachtop")
+	m := Model{pal: th, netHist: map[string]*series{
+		"eth0":  {limit: 10, values: []float64{10, 20, 30}},
+		"wlan0": {limit: 10, values: []float64{5, 15, 25}},
+	}}
+	ifaces := []metrics.Network{
+		{Name: "eth0"},
+		{Name: "wlan0"},
+	}
+	lines := m.netPerIfaceGraphs(ifaces, 40, 6)
+	if len(lines) == 0 {
+		t.Fatal("expected per-interface graph lines")
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > 40 {
+			t.Errorf("graph line too wide: %q", line)
+		}
+	}
+
+	// Too little room falls back to aggregate.
+	short := m.netPerIfaceGraphs(ifaces, 40, 2)
+	if len(short) == 0 {
+		t.Fatal("expected fallback graph lines for tiny height")
+	}
+}
