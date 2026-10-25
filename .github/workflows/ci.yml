@@ -3,30 +3,134 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new commit on the same branch or pull request makes older runs obsolete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
 jobs:
-  test:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Verify modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Check go.mod and go.sum are tidy
+        run: go mod tidy -diff
+
       - name: Check formatting
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
-            echo "gofmt needed for:"
+            echo "::error::The following files need gofmt:"
             echo "$unformatted"
             exit 1
           fi
+
       - name: Vet
         run: go vet ./...
+
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        go:
+          - "1.27.1" # minimum version declared in go.mod
+          - "stable" # catch regressions with the current Go release
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
       - name: Test
-        run: go test -race ./...
-      - name: Build
-        run: CGO_ENABLED=0 go build ./...
+        run: go test -race -count=1 -shuffle=on -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Summarize coverage
+        run: |
+          echo "### Coverage (Go ${{ matrix.go }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -n 1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.go }}
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build release binary
+        run: make build
+
+      - name: Smoke test CLI
+        run: |
+          ./tachtop --version
+          ./tachtop --list-themes >/dev/null
+          ./tachtop --help >/dev/null
+
+      - name: Cross-compile for linux/arm64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: go build -trimpath -ldflags "-s -w" -o ./tachtop-linux-arm64 ./cmd/tachtop
+
+      - name: Upload linux/amd64 binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: tachtop-linux-amd64
+          path: ./tachtop
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload linux/arm64 binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: tachtop-linux-arm64
+          path: ./tachtop-linux-arm64
+          if-no-files-found: error
+          retention-days: 7
