@@ -218,8 +218,9 @@ func (m *Model) moveSelection(delta int) {
 	if len(list) == 0 {
 		return
 	}
-	idx := clampInt(m.selectedIndex(list)+delta, 0, len(list)-1)
-	if idx == m.selectedIndex(list) {
+	current := m.selectedIndex(list)
+	idx := clampInt(current+delta, 0, len(list)-1)
+	if idx == current {
 		return
 	}
 	m.selectedPID = list[idx].PID

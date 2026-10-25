@@ -110,6 +110,32 @@ func TestMoveSelectionAtEdges(t *testing.T) {
 	}
 }
 
+func TestMoveSelectionFromPicked(t *testing.T) {
+	// sortCPU desc: 20 (20%), 30 (10%), 10 (1%).
+	m := Model{snap: metrics.Snapshot{Procs: testProcs()}, sortMode: sortCPU, sortDesc: true}
+	// From an unpinned selection, moveSelection starts at the top offset (0).
+	m.moveSelection(1) // index 0 -> 1: PID 30
+	if m.selectedPID != 30 {
+		t.Fatalf("first move should select PID 30, got %d", m.selectedPID)
+	}
+	m.moveSelection(1) // index 1 -> 2: PID 10
+	if m.selectedPID != 10 {
+		t.Fatalf("second move should select PID 10, got %d", m.selectedPID)
+	}
+	m.moveSelection(100) // clamp to last row: PID 10
+	if m.selectedPID != 10 {
+		t.Fatalf("large move should clamp to PID 10, got %d", m.selectedPID)
+	}
+	m.moveSelection(-1) // index 2 -> 1: PID 30
+	if m.selectedPID != 30 {
+		t.Fatalf("move up should select PID 30, got %d", m.selectedPID)
+	}
+	m.moveSelection(-100) // clamp to first row: PID 20
+	if m.selectedPID != 20 {
+		t.Fatalf("large move up should clamp to PID 20, got %d", m.selectedPID)
+	}
+}
+
 func TestSelectProcessAt(t *testing.T) {
 	m := Model{
 		width:    120,
