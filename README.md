@@ -1,5 +1,7 @@
 # tachtop
 
+[![CI](https://github.com/Orizon-Software-Foundation/tachtop/actions/workflows/ci.yml/badge.svg)](https://github.com/Orizon-Software-Foundation/tachtop/actions/workflows/ci.yml)
+
 A fast, friendly terminal system monitor for Linux.
 
 `tachtop` shows what your machine is doing right now — CPU, memory, GPUs,
