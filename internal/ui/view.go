@@ -9,6 +9,7 @@ import (
 
 	"github.com/Orizon-Software-Foundation/tachtop/internal/config"
 	"github.com/Orizon-Software-Foundation/tachtop/internal/format"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
 	"github.com/Orizon-Software-Foundation/tachtop/internal/theme"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -417,32 +418,152 @@ func (m Model) netLines(w, h int) []string {
 		return nil
 	}
 
-	lines := []string{
-		m.goodText("↓ "+format.Rate(m.snap.NetRx)) + "   " + m.accentText("↑ "+format.Rate(m.snap.NetTx)),
+	var lines []string
+
+	// Headline aggregate throughput.
+	lines = append(lines,
+		m.goodText("↓ "+format.Rate(m.snap.NetRx))+"   "+m.accentText("↑ "+format.Rate(m.snap.NetTx)))
+
+	if len(lines) >= innerH {
+		return lines
 	}
 
-	ifaceBudget := 0
+	netIfaces := m.snap.Networks
+
+	// Interface rows: name + rates by default; add cumulative bytes on wider
+	// panels, and MTU / errors / flags only when there's genuinely room.
+	ifaceBudget := innerH - 1 // leave room for the headline
 	if innerH >= 6 {
-		ifaceBudget = 2
+		ifaceBudget = innerH - 3 // keep at least a couple of rows for the graph
 	}
+	ifaceBudget = maxInt(1, ifaceBudget)
+
 	shown := 0
-	for _, n := range m.snap.Networks {
+	for _, n := range netIfaces {
 		if shown >= ifaceBudget {
 			break
 		}
-		if n.Rx+n.Tx <= 0 {
-			continue
-		}
-		name := m.dimText(padRight(truncate(clean(n.Name), 10), 10))
-		line := name + " " + m.goodText("↓ "+format.Rate(n.Rx)) + "  " + m.accentText("↑ "+format.Rate(n.Tx))
-		lines = append(lines, line)
+		lines = append(lines, m.netIfaceRow(n, innerW))
 		shown++
 	}
 
-	graphH := innerH - len(lines)
-	if graphH > 0 {
-		max := AutoMax(m.histNet.data(), 1024)
-		lines = append(lines, RenderGraph(m.histNet.data(), innerW, graphH, max, m.pal.Ramp)...)
+	// Graph section: the aggregate graph gets all remaining height. Per-interface
+	// mini-graphs only appear when there is generous space (tall and wide).
+	remaining := innerH - len(lines)
+	if remaining >= 2 {
+		usePerIface := remaining >= 6 && innerW >= 55 &&
+			len(netIfaces) > 0 && len(netIfaces) <= 4
+		if usePerIface {
+			lines = append(lines, m.netPerIfaceGraphs(netIfaces, innerW, remaining)...)
+		} else {
+			max := AutoMax(m.histNet.data(), 1024)
+			lines = append(lines, RenderGraph(m.histNet.data(), innerW, remaining, max, m.pal.Ramp)...)
+		}
+	}
+
+	// Connections section only when there is truly spare room: tall and wide.
+	remaining = innerH - len(lines)
+	if remaining >= 4 && innerW >= 60 && len(m.snap.Connections) > 0 {
+		lines = append(lines, m.netConnSection(innerW, remaining)...)
+	}
+
+	return lines
+}
+
+func (m Model) netIfaceRow(n metrics.Network, width int) string {
+	name := truncate(clean(n.Name), 10)
+	rx := m.goodText("↓ " + format.Rate(n.Rx))
+	tx := m.accentText("↑ " + format.Rate(n.Tx))
+
+	parts := []string{name, rx, tx}
+
+	// Cumulative bytes when there's room.
+	if width >= 44 {
+		parts = append(parts, m.dimText(format.Bytes(n.BytesRecv+n.BytesSent)))
+	}
+
+	// MTU, errors, drops and flags only on wide panels.
+	if width >= 66 {
+		if n.MTU > 0 {
+			parts = append(parts, m.dimText(fmt.Sprintf("MTU %d", n.MTU)))
+		}
+		if n.ErrsIn+n.ErrsOut+n.DropsIn+n.DropsOut > 0 {
+			parts = append(parts, m.badText(fmt.Sprintf("E%d/D%d",
+				n.ErrsIn+n.ErrsOut, n.DropsIn+n.DropsOut)))
+		}
+		if n.Flags != "" {
+			parts = append(parts, m.dimText(n.Flags))
+		}
+	}
+
+	return fit(strings.Join(parts, "  "), width)
+}
+
+func (m Model) netPerIfaceGraphs(ifaces []metrics.Network, width, height int) []string {
+	if height < 2 || len(ifaces) == 0 {
+		return nil
+	}
+	count := len(ifaces)
+	if count > height/3 {
+		count = height / 3
+	}
+	if count == 0 {
+		count = 1
+	}
+	per := height / count
+	if per < 2 {
+		per = 2
+	}
+
+	var lines []string
+	used := 0
+	for i := 0; i < count; i++ {
+		n := ifaces[i]
+		h := per
+		if i == count-1 {
+			h = height - used
+		}
+		if h < 2 || used+h > height {
+			break
+		}
+		data := m.histNet.data()
+		if hs, ok := m.netHist[n.Name]; ok && hs != nil {
+			data = hs.data()
+		}
+		if len(data) == 0 {
+			data = m.histNet.data()
+		}
+		max := AutoMax(data, 1024)
+		lines = append(lines, RenderGraph(data, width, h, max, m.pal.Ramp)...)
+		used += h
+		if used >= height {
+			break
+		}
+	}
+	return lines
+}
+
+func (m Model) netConnSection(width, height int) []string {
+	var lines []string
+	if height < 3 || len(m.snap.Connections) == 0 {
+		return lines
+	}
+	lines = append(lines, m.dimText("CONNECTIONS"))
+	rows := height - 1
+	shown := 0
+	for _, c := range m.snap.Connections {
+		if shown >= rows {
+			break
+		}
+		local := truncate(clean(c.Local), 18)
+		remote := truncate(clean(c.Remote), 18)
+		state := c.State
+		if state == "" {
+			state = "-"
+		}
+		line := fmt.Sprintf("%-4s %-18s -> %-18s %s", c.Proto, local, remote, state)
+		lines = append(lines, fit(line, width))
+		shown++
 	}
 	return lines
 }

@@ -67,6 +67,8 @@ type Model struct {
 	histNet  series
 	histDisk series
 
+	netHist map[string]*series
+
 	sortMode sortMode
 	sortDesc bool
 	filter   string
@@ -120,6 +122,7 @@ func New(opts Options) Model {
 		histMem:     newSeries(150),
 		histNet:     newSeries(150),
 		histDisk:    newSeries(150),
+		netHist:     make(map[string]*series),
 		sortMode:    sortCPU,
 		sortDesc:    true,
 		filterInput: ti,
@@ -260,6 +263,16 @@ func (m Model) applySnapshot(snap metrics.Snapshot) (tea.Model, tea.Cmd) {
 	}
 	m.histNet.add(snap.NetRx + snap.NetTx)
 	m.histDisk.add(snap.DiskRead + snap.DiskWrite)
+
+	// Per-interface rate history for the detailed network panel.
+	for _, n := range snap.Networks {
+		h, ok := m.netHist[n.Name]
+		if !ok {
+			h = &series{limit: 150, values: make([]float64, 0, 150)}
+			m.netHist[n.Name] = h
+		}
+		h.add(n.Rx + n.Tx)
+	}
 
 	m.reconcileSelection()
 	m.ensureVisible()
