@@ -104,7 +104,7 @@ That is all you need. Press `?` inside tachtop for the full key list.
 | `q`, `ctrl+c` | quit |
 | `?` | open or close help |
 | `p` | pause / resume updates |
-| `↑` `↓`, mouse wheel | select a process |
+| `↑` `↓`, mouse wheel, click | select a process |
 | `PgUp` `PgDn` | move one page |
 | `Home` `End` | jump to first / last process |
 | `/` | filter by name, user or PID |

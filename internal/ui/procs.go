@@ -128,22 +128,89 @@ func (m *Model) ensureVisible() {
 		m.procOffset = 0
 		return
 	}
-	rows := m.procRows()
+	offset, _ := m.procViewport(list, m.procRows())
+	m.procOffset = offset
+}
+
+// procViewport returns the first visible row and the selected row for list,
+// honouring the current scroll offset. rows is the number of process rows
+// that fit in the table.
+func (m Model) procViewport(list []metrics.Proc, rows int) (offset, selected int) {
 	if rows < 1 {
 		rows = 1
 	}
-	sel := m.selectedIndex(list)
-	if sel < m.procOffset {
-		m.procOffset = sel
-	}
-	if sel >= m.procOffset+rows {
-		m.procOffset = sel - rows + 1
+	if len(list) == 0 {
+		return 0, 0
 	}
 	maxOffset := len(list) - rows
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
-	m.procOffset = clampInt(m.procOffset, 0, maxOffset)
+	selected = m.selectedIndex(list)
+	offset = clampInt(m.procOffset, 0, maxOffset)
+	if selected < offset {
+		offset = selected
+	}
+	if selected >= offset+rows {
+		offset = selected - rows + 1
+	}
+	return offset, selected
+}
+
+// procPanelOrigin returns the top-left cell of the process panel. It mirrors
+// the composition in bodyView so mouse events can be mapped back to rows.
+func (m Model) procPanelOrigin(l screenLayout) (x, y int) {
+	if l.showDisk {
+		return l.disk.w, 1 + l.cpu.h + l.gpu.h
+	}
+	return 0, 1 + l.cpu.h + l.mem.h + l.gpu.h
+}
+
+// procPanelContains reports whether a screen cell is inside the process panel.
+func (m Model) procPanelContains(x, y int) bool {
+	l := m.layout()
+	if l.tooSmall {
+		return false
+	}
+	px, py := m.procPanelOrigin(l)
+	return x >= px && x < px+l.proc.w && y >= py && y < py+l.proc.h
+}
+
+// procAt returns the process under a screen cell in the process table. Cells
+// on the border, the column header or below the last row match nothing.
+func (m Model) procAt(x, y int) (metrics.Proc, bool) {
+	l := m.layout()
+	if l.tooSmall || !m.procPanelContains(x, y) {
+		return metrics.Proc{}, false
+	}
+	_, py := m.procPanelOrigin(l)
+	row := y - py - 2 // top border and the column header
+	if row < 0 {
+		return metrics.Proc{}, false
+	}
+	list := m.visibleProcs()
+	rows := m.procRows()
+	offset, _ := m.procViewport(list, rows)
+	if row >= rows {
+		return metrics.Proc{}, false
+	}
+	idx := offset + row
+	if idx < 0 || idx >= len(list) {
+		return metrics.Proc{}, false
+	}
+	return list[idx], true
+}
+
+// selectProcessAt selects the row under a mouse click. It returns false when
+// the click was not on a process row.
+func (m *Model) selectProcessAt(x, y int) bool {
+	p, ok := m.procAt(x, y)
+	if !ok {
+		return false
+	}
+	m.selectedPID = p.PID
+	m.ensureVisible()
+	return true
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -302,18 +369,7 @@ func (m Model) procTableLines(list []metrics.Proc, w, h int) []string {
 		return lines
 	}
 
-	maxOffset := len(list) - rows
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	offset := clampInt(m.procOffset, 0, maxOffset)
-	sel := m.selectedIndex(list)
-	if sel < offset {
-		offset = sel
-	}
-	if sel >= offset+rows {
-		offset = sel - rows + 1
-	}
+	offset, sel := m.procViewport(list, rows)
 
 	for i := 0; i < rows; i++ {
 		idx := offset + i

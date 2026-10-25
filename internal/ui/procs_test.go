@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -106,6 +107,164 @@ func TestMoveSelectionAtEdges(t *testing.T) {
 	m.moveSelection(100)
 	if m.selectedPID != 10 {
 		t.Fatalf("moving down should select the last row, got %d", m.selectedPID)
+	}
+}
+
+func TestSelectProcessAt(t *testing.T) {
+	m := Model{
+		width:    120,
+		height:   40,
+		hasSnap:  true,
+		snap:     metrics.Snapshot{Procs: testProcs(), ProcCount: len(testProcs())},
+		sortMode: sortPID,
+		sortDesc: false,
+	}
+	l := m.layout()
+	if !l.showDisk {
+		t.Fatal("expected a layout with the disk panel")
+	}
+	px, py := m.procPanelOrigin(l)
+	list := m.visibleProcs()
+
+	for i, want := range []int32{10, 20, 30} {
+		if !m.selectProcessAt(px+2, py+2+i) {
+			t.Fatalf("row %d did not select", i)
+		}
+		if m.selectedPID != want {
+			t.Fatalf("row %d selected PID %d, want %d", i, m.selectedPID, want)
+		}
+	}
+
+	// Empty space below the last row, the header, the border and the CPU
+	// panel must not change the selection.
+	for _, pt := range [][2]int{
+		{px + 2, py + 2 + len(list)},
+		{px + 1, py + 1},
+		{px, py},
+		{2, 2},
+	} {
+		if m.selectProcessAt(pt[0], pt[1]) {
+			t.Errorf("click at (%d,%d) unexpectedly selected a process", pt[0], pt[1])
+		}
+		if m.selectedPID != 30 {
+			t.Errorf("click at (%d,%d) changed selection to %d", pt[0], pt[1], m.selectedPID)
+		}
+	}
+}
+
+func TestSelectProcessAtNarrowLayout(t *testing.T) {
+	m := Model{
+		width:    70,
+		height:   30,
+		hasSnap:  true,
+		snap:     metrics.Snapshot{Procs: testProcs(), ProcCount: len(testProcs())},
+		sortMode: sortPID,
+	}
+	l := m.layout()
+	if l.showDisk {
+		t.Fatal("expected a narrow layout without the disk panel")
+	}
+	px, py := m.procPanelOrigin(l)
+	if !m.selectProcessAt(px+2, py+3) {
+		t.Fatal("click on the second row did not select")
+	}
+	if m.selectedPID != 20 {
+		t.Fatalf("selected PID %d, want 20", m.selectedPID)
+	}
+}
+
+func TestSelectProcessAtScrolledList(t *testing.T) {
+	procs := make([]metrics.Proc, 100)
+	for i := range procs {
+		procs[i] = metrics.Proc{PID: int32(i + 1), Name: fmt.Sprintf("p%d", i+1)}
+	}
+	m := Model{
+		width:      120,
+		height:     40,
+		hasSnap:    true,
+		snap:       metrics.Snapshot{Procs: procs, ProcCount: len(procs)},
+		sortMode:   sortPID,
+		procOffset: 50,
+	}
+	l := m.layout()
+	px, py := m.procPanelOrigin(l)
+	m.ensureVisible()
+
+	list := m.visibleProcs()
+	rows := m.procRows()
+	offset, _ := m.procViewport(list, rows)
+	if offset != 50 {
+		t.Fatalf("offset = %d, want 50", offset)
+	}
+	if !m.selectProcessAt(px+2, py+2) {
+		t.Fatal("first visible row did not select")
+	}
+	if want := list[offset].PID; m.selectedPID != want {
+		t.Fatalf("selected PID %d, want %d", m.selectedPID, want)
+	}
+	if !m.selectProcessAt(px+2, py+2+rows-1) {
+		t.Fatal("last visible row did not select")
+	}
+	if want := list[offset+rows-1].PID; m.selectedPID != want {
+		t.Fatalf("selected PID %d, want %d", m.selectedPID, want)
+	}
+}
+
+func TestMouseWheelOnlyScrollsProcessPanel(t *testing.T) {
+	m := Model{
+		width:    120,
+		height:   40,
+		hasSnap:  true,
+		snap:     metrics.Snapshot{Procs: testProcs(), ProcCount: len(testProcs())},
+		sortMode: sortPID,
+	}
+	l := m.layout()
+	px, py := m.procPanelOrigin(l)
+	list := m.visibleProcs()
+
+	// A wheel event over the CPU panel is ignored.
+	updated, _ := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+		X:      2,
+		Y:      2,
+	})
+	if got := updated.(Model); got.selectedPID != 0 {
+		t.Fatalf("wheel outside the process panel selected PID %d", got.selectedPID)
+	}
+
+	// A wheel event over the process table moves the selection.
+	updated, _ = m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+		X:      px + 2,
+		Y:      py + 3,
+	})
+	if got := updated.(Model); got.selectedPID != list[len(list)-1].PID {
+		t.Fatalf("wheel selected PID %d, want %d", got.selectedPID, list[len(list)-1].PID)
+	}
+}
+
+func TestMouseClickDispatchesSelection(t *testing.T) {
+	m := Model{
+		width:    120,
+		height:   40,
+		hasSnap:  true,
+		snap:     metrics.Snapshot{Procs: testProcs(), ProcCount: len(testProcs())},
+		sortMode: sortPID,
+	}
+	l := m.layout()
+	px, py := m.procPanelOrigin(l)
+	list := m.visibleProcs()
+
+	updated, _ := m.handleMouse(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      px + 2,
+		Y:      py + 3,
+	})
+	if got := updated.(Model); got.selectedPID != list[1].PID {
+		t.Fatalf("click selected PID %d, want %d", got.selectedPID, list[1].PID)
 	}
 }
 

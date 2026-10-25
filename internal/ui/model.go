@@ -419,10 +419,16 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch msg.Button {
+	case tea.MouseButtonLeft:
+		m.selectProcessAt(msg.X, msg.Y)
 	case tea.MouseButtonWheelUp:
-		m.moveSelection(-3)
+		if m.procPanelContains(msg.X, msg.Y) {
+			m.moveSelection(-3)
+		}
 	case tea.MouseButtonWheelDown:
-		m.moveSelection(3)
+		if m.procPanelContains(msg.X, msg.Y) {
+			m.moveSelection(3)
+		}
 	}
 	return m, nil
 }
