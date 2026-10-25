@@ -55,7 +55,7 @@ make install PREFIX="$HOME/.local"
 make install PREFIX=/usr DESTDIR=/tmp/pkg
 ```
 
-## Usage
+## Usage:
 
 ```sh
 tachtop
