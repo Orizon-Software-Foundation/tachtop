@@ -27,6 +27,18 @@ func Rate(bytesPerSecond float64) string {
 	return human(bytesPerSecond, byteUnits, "/s")
 }
 
+// Power formats a wattage. Small values keep one decimal place; larger values
+// are rounded so the result stays compact in a panel header.
+func Power(watts float64) string {
+	if math.IsNaN(watts) || math.IsInf(watts, 0) || watts < 0 {
+		watts = 0
+	}
+	if watts >= 10 {
+		return fmt.Sprintf("%.0fW", watts)
+	}
+	return fmt.Sprintf("%.1fW", watts)
+}
+
 // BytesShort formats bytes using one-letter units, for places where two
 // values share a line and readability matters more than spelling out IEC
 // names: "2.8G/8.0G", "512M", "48B".

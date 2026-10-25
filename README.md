@@ -24,8 +24,8 @@ panels. It is hidden when no adapter is detected.
 
 ## Features
 
-- **CPU** — total usage, per-core gauges, frequency, temperature and a live
-  history graph.
+- **CPU** — total usage, per-core gauges, frequency, temperature, package
+  power draw and a live history graph.
 - **Memory** — used, available, free, cache and swap at a glance.
 - **GPUs** — every detected DRM adapter, with utilization, temperature, core
   clock, VRAM and power wherever the vendor exposes them.
@@ -180,11 +180,14 @@ CPU model and temperature information, filesystem usage and on-demand process
 details.
 
 - No background service and no state files.
-- No root privileges; some process details (for example another user's
-  command line or working directory) are hidden by the kernel and shown as
-  `–`.
+- No root privileges are required. Some process details (for example another
+  user's command line or working directory) may be hidden by the kernel and
+  shown as `–`; CPU power counters are often restricted to root as well.
 - Per-process CPU is calculated from `/proc/<pid>/stat` deltas between
   refreshes, so the process table stays fast even with hundreds of processes.
+- CPU package power is calculated from RAPL energy counters in
+  `/sys/class/powercap`, with a hwmon fallback for AMD drivers. Some kernels
+  only allow root to read those counters; the rest of the panel still works.
 - If a metric is unavailable (common in containers or virtual machines), the
   rest of the screen keeps working.
 
@@ -215,6 +218,11 @@ rows. tachtop rearranges panels as the window grows.
 
 **Temperature shows `–`** — no readable sensor was found in `/sys`. This is
 normal on many virtual machines and in containers.
+
+**CPU power is missing** — the RAPL energy counters in
+`/sys/class/powercap` are often readable only by root. Run tachtop with the
+needed permission, or use a kernel and driver that expose CPU power through
+hwmon. Everything else keeps working without it.
 
 **A GPU is missing from the panel** — only adapters with a DRM card are shown.
 Some virtual GPUs, remote sessions and older drivers do not create one.

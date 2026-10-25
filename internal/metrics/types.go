@@ -20,6 +20,8 @@ type Snapshot struct {
 	CPUCores     int
 	CPUMHz       float64
 	CPUTemp      float64
+	CPUPower     float64
+	HasCPUPower  bool
 
 	MemTotal     uint64
 	MemUsed      uint64

@@ -224,6 +224,9 @@ func (m Model) cpuLines(w, h int) []string {
 	if m.snap.CPUTemp > 0 {
 		stats = append(stats, format.Temperature(m.snap.CPUTemp, m.cfg.TempUnit))
 	}
+	if m.snap.HasCPUPower {
+		stats = append(stats, format.Power(m.snap.CPUPower))
+	}
 	left := m.accentBold().Render(strings.Join(stats, " · "))
 	lines := []string{fit(left, innerW)}
 

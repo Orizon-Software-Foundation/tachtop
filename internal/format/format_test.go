@@ -65,6 +65,25 @@ func TestRate(t *testing.T) {
 	}
 }
 
+func TestPower(t *testing.T) {
+	tests := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0.0W"},
+		{5.34, "5.3W"},
+		{9.96, "10.0W"},
+		{45.2, "45W"},
+		{150, "150W"},
+		{-1, "0.0W"},
+	}
+	for _, tt := range tests {
+		if got := Power(tt.in); got != tt.want {
+			t.Errorf("Power(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestDurationShort(t *testing.T) {
 	tests := []struct {
 		in   time.Duration

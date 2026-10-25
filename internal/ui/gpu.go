@@ -81,9 +81,9 @@ func (m Model) gpuLine(gpu metrics.GPU, width int) string {
 		add(m.dimText("VRAM " + format.BytesShort(gpu.MemUsed) + "/" + format.BytesShort(gpu.MemTotal)))
 	}
 	if gpu.Power > 0 {
-		power := formatGPUPower(gpu.Power)
+		power := format.Power(gpu.Power)
 		if gpu.PowerLimit > 0 {
-			power += "/" + formatGPUPower(gpu.PowerLimit)
+			power += "/" + format.Power(gpu.PowerLimit)
 		}
 		add(m.dimText(power))
 	}
@@ -158,11 +158,4 @@ func gpuMemClockText(gpu metrics.GPU) string {
 		return fmt.Sprintf("MEM %.0f/%.0fMHz", gpu.MemMHz, gpu.MaxMemMHz)
 	}
 	return fmt.Sprintf("MEM %.0fMHz", gpu.MemMHz)
-}
-
-func formatGPUPower(watts float64) string {
-	if watts >= 10 {
-		return fmt.Sprintf("%.0fW", watts)
-	}
-	return fmt.Sprintf("%.1fW", watts)
 }

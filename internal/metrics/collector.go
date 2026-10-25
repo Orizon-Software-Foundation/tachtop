@@ -67,6 +67,8 @@ type Collector struct {
 	mhz    float64
 	mhzAt  time.Time
 
+	power powerMeter
+
 	gpuCards   []gpuCard
 	gpuAt      time.Time
 	nvidia     []nvidiaStat
@@ -116,6 +118,9 @@ func (c *Collector) initStatic() {
 	if c.users == nil {
 		c.users = make(map[uint32]string)
 	}
+	if c.power.powercapRoot == "" {
+		c.power = newPowerMeter(defaultPowercapRoot, defaultHwmonRoot)
+	}
 
 	if info, err := host.Info(); err == nil {
 		c.hostname = info.Hostname
@@ -158,6 +163,7 @@ func (c *Collector) resetLocked() {
 	c.cpuValid = false
 	c.tempAt = time.Time{}
 	c.mhzAt = time.Time{}
+	c.power.reset()
 }
 
 // Collect takes one snapshot. Errors are reported in Snapshot.Err; a partial
@@ -249,6 +255,7 @@ func (c *Collector) collectLocked() Snapshot {
 
 	s.CPUTemp = c.temperature(now)
 	s.CPUMHz = c.frequency(now)
+	s.CPUPower, s.HasCPUPower = c.power.sample(now)
 	s.Networks, s.NetRx, s.NetTx = c.collectNet(dt, first)
 	s.Disks = c.collectDisks()
 	s.DiskRead, s.DiskWrite = c.collectDiskIO(dt, first)
