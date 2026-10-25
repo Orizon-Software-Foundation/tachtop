@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/Orizon-Software-Foundation/tachtop/actions/workflows/ci.yml/badge.svg)](https://github.com/Orizon-Software-Foundation/tachtop/actions/workflows/ci.yml)
 
+
+![Demonstration of tachtop's abilities](demo.png)
+
+
 `tachtop` is an all-in-one interactive systems monitor, similar to btop(++), allowing you to observe many aspects of your system in real time. It requires little to no dependencies, as it is very light, allowing you to go from compilation to resource observation very quickly.
 
 The name `tachtop` mainly is an acronym for "**Tach**yon **Top**logical Viewer", getting inspiration from the Tachyon particle, which travels faster than the speed of light.
