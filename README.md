@@ -68,8 +68,11 @@ if not in PATH
 
 Simple as that. Press `?` inside tachtop for the full key list.
 
+## Documentation & Information:
 
-## License
+Detailed documentation, usages, and troubleshooting steps can be found [here](Documentation.md).
+
+## License:
 
 Licensed under the European Union Public Licence v. 1.2 (EUPL-1.2).
-See [LICENSE](LICENSE).
+See [LICENSE](LICENSE) for more information.
