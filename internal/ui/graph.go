@@ -4,8 +4,8 @@ import (
 	"math"
 	"strings"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/theme"
 )
 
 // Braille cells are 2 columns by 4 rows. This lookup converts a position
@@ -29,7 +29,26 @@ func RenderGraph(values []float64, width, height int, max float64, ramp []lipglo
 
 	pixelWidth := width * 2
 	pixelHeight := height * 4
-	points := resample(values, pixelWidth)
+
+	var points []float64
+	switch len(values) {
+	case 0:
+		// No history yet: draw an empty grid rather than a fake baseline.
+		points = make([]float64, pixelWidth)
+		for i := range points {
+			points[i] = math.NaN()
+		}
+	case 1:
+		// A single sample is one column at the right edge, not a flat line
+		// across the whole graph.
+		points = make([]float64, pixelWidth)
+		for i := range points {
+			points[i] = math.NaN()
+		}
+		points[pixelWidth-1] = values[0]
+	default:
+		points = resample(values, pixelWidth)
+	}
 
 	grid := make([][]byte, height)
 	for i := range grid {
@@ -38,6 +57,9 @@ func RenderGraph(values []float64, width, height int, max float64, ramp []lipglo
 
 	for x := 0; x < pixelWidth; x++ {
 		v := points[x]
+		if math.IsNaN(v) {
+			continue
+		}
 		t := v / max
 		if t < 0 || math.IsNaN(t) {
 			t = 0

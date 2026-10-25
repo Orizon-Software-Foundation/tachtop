@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/format"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/format"
-	"github.com/tachtop/tachtop/internal/metrics"
 )
 
 const (

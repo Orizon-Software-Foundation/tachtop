@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/format"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/format"
-	"github.com/tachtop/tachtop/internal/metrics"
 )
 
 // --- GPU panel -------------------------------------------------------------
@@ -74,11 +74,18 @@ func (m Model) gpuLine(gpu metrics.GPU, width int) string {
 	if clock := gpuClockText(gpu); clock != "" {
 		add(m.accentText(clock))
 	}
+	if clock := gpuMemClockText(gpu); clock != "" {
+		add(m.dimText(clock))
+	}
 	if gpu.MemTotal > 0 {
 		add(m.dimText("VRAM " + format.BytesShort(gpu.MemUsed) + "/" + format.BytesShort(gpu.MemTotal)))
 	}
 	if gpu.Power > 0 {
-		add(m.dimText(formatGPUPower(gpu.Power)))
+		power := formatGPUPower(gpu.Power)
+		if gpu.PowerLimit > 0 {
+			power += "/" + formatGPUPower(gpu.PowerLimit)
+		}
+		add(m.dimText(power))
 	}
 
 	statsWidth := 0
@@ -141,6 +148,16 @@ func gpuClockText(gpu metrics.GPU) string {
 		return fmt.Sprintf("%.0f/%.0fMHz", gpu.CoreMHz, gpu.MaxCoreMHz)
 	}
 	return fmt.Sprintf("%.0fMHz", gpu.CoreMHz)
+}
+
+func gpuMemClockText(gpu metrics.GPU) string {
+	if gpu.MemMHz <= 0 {
+		return ""
+	}
+	if gpu.MaxMemMHz > gpu.MemMHz {
+		return fmt.Sprintf("MEM %.0f/%.0fMHz", gpu.MemMHz, gpu.MaxMemMHz)
+	}
+	return fmt.Sprintf("MEM %.0fMHz", gpu.MemMHz)
 }
 
 func formatGPUPower(watts float64) string {

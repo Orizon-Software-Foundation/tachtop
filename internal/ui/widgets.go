@@ -132,8 +132,9 @@ func clean(s string) string {
 		switch {
 		case r == '\t':
 			b.WriteByte(' ')
-		case unicode.IsControl(r):
-			// drop newlines, carriage returns, escapes and friends
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
+			// Drop newlines, carriage returns, escapes, bidirectional
+			// overrides and other invisible formatting characters.
 		default:
 			b.WriteRune(r)
 		}

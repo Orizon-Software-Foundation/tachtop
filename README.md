@@ -27,8 +27,11 @@ panels. It is hidden when no adapter is detected.
 - **Memory** — used, available, free, cache and swap at a glance.
 - **GPUs** — every detected DRM adapter, with utilization, temperature, core
   clock, VRAM and power wherever the vendor exposes them.
-- **Network** — download and upload rates plus a graph, per interface.
-- **Disk** — read/write activity and usage for mounted filesystems.
+- **Network** — download and upload rates plus a graph, per interface. The
+  headline rate follows the default-route interface so bridged, bonded, VPN and
+  container traffic is not counted twice.
+- **Disk** — read/write activity and usage for mounted filesystems. Containers
+  that only expose an overlay root still get a disk panel.
 - **Processes** — CPU, memory, user, state and RSS; sort, filter, inspect and
   terminate processes without leaving the screen.
 - **Responsive layout** — panels rearrange automatically for wide, medium and
@@ -54,7 +57,7 @@ but its live values may be unavailable.
 ### Build from source
 
 ```sh
-git clone
+git clone https://github.com/Orizon-Software-Foundation/tachtop.git
 cd tachtop
 make
 ./tachtop
@@ -105,7 +108,7 @@ That is all you need. Press `?` inside tachtop for the full key list.
 | `PgUp` `PgDn` | move one page |
 | `Home` `End` | jump to first / last process |
 | `/` | filter by name, user or PID |
-| `enter` | show process details |
+| `enter` | show process details (`↑` `↓`, `PgUp` `PgDn` scroll) |
 | `c`, `esc` | clear the filter |
 | `s` | cycle sort: CPU → memory → PID → name |
 | `r` | reverse the sort order |
@@ -147,13 +150,14 @@ defaults. To customise it, create
 
 The file is read from `$XDG_CONFIG_HOME/tachtop/config.json` (usually
 `~/.config/tachtop/config.json`). Override the location with the
-`TACHTOP_CONFIG` environment variable or `--config`.
+`TACHTOP_CONFIG` environment variable or `--config`. Unknown fields are
+rejected, so a typo produces a warning instead of being silently ignored.
 
 ### Themes
 
 | Theme | Description |
 | --- | --- |
-| `tachtop` | teal and violet (default) |
+| `tachtop` | teal and warm accents (default) |
 | `dracula` | the classic dark palette |
 | `gruvbox` | warm, earthy colours |
 | `nord` | cool arctic blues |

@@ -16,6 +16,7 @@ func TestClean(t *testing.T) {
 		{"a\nb", "ab"},
 		{"\x1b[31mred\x1b[0m", "[31mred[0m"},
 		{"ok\x00", "ok"},
+		{"evil\u202Etext", "eviltext"},
 	}
 	for _, tt := range tests {
 		if got := clean(tt.in); got != tt.want {

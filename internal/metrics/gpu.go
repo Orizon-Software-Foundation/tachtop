@@ -2,6 +2,8 @@ package metrics
 
 import (
 	"context"
+	"encoding/csv"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,14 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // gpuCard is the static, slow-changing part of a detected DRM card.
 type gpuCard struct {
-	card   string // cardN, used to build paths below /sys/class/drm
 	dev    string // /sys/class/drm/cardN/device
 	vendor string // NVIDIA, AMD, Intel or Other
-	driver string
 	slot   string // normalised PCI slot, e.g. 0:01:00.0
 	name   string
 	hwmon  string
@@ -24,7 +25,6 @@ type gpuCard struct {
 
 // nvidiaStat is one row from nvidia-smi.
 type nvidiaStat struct {
-	index    int
 	slot     string
 	name     string
 	util     float64
@@ -72,23 +72,23 @@ func (c *Collector) collectGPUs(now time.Time) []GPU {
 	out := make([]GPU, 0, len(cards))
 	for i, card := range cards {
 		g := GPU{
-			Index:   i,
-			Name:    card.name,
-			Vendor:  card.vendor,
-			Driver:  card.driver,
-			PCISlot: card.slot,
+			Index:  i,
+			Name:   card.name,
+			Vendor: card.vendor,
 		}
 
-		if n, ok := bySlot[card.slot]; ok {
-			if n.name != "" {
-				g.Name = n.name
+		if card.slot != "" {
+			if n, ok := bySlot[card.slot]; ok {
+				if n.name != "" {
+					g.Name = n.name
+				}
+				g.UtilPercent, g.HasUtil = n.util, n.hasUtil
+				g.Temp, g.HasTemp = n.temp, n.hasTemp
+				g.CoreMHz, g.MaxCoreMHz = n.core, n.maxCore
+				g.MemMHz, g.MaxMemMHz = n.mem, n.maxMem
+				g.MemUsed, g.MemTotal = n.memUsed, n.memTotal
+				g.Power, g.PowerLimit = n.power, n.limit
 			}
-			g.UtilPercent, g.HasUtil = n.util, n.hasUtil
-			g.Temp, g.HasTemp = n.temp, n.hasTemp
-			g.CoreMHz, g.MaxCoreMHz = n.core, n.maxCore
-			g.MemMHz, g.MaxMemMHz = n.mem, n.maxMem
-			g.MemUsed, g.MemTotal = n.memUsed, n.memTotal
-			g.Power, g.PowerLimit = n.power, n.limit
 		}
 
 		switch card.vendor {
@@ -124,12 +124,10 @@ func detectGPUs() []gpuCard {
 	sort.Slice(matches, func(i, j int) bool {
 		return cardNumber(matches[i]) < cardNumber(matches[j])
 	})
-	names := lspciNames()
 
 	var cards []gpuCard
 	for _, path := range matches {
-		card := filepath.Base(path)
-		if !isCardName(card) {
+		if !isCardName(filepath.Base(path)) {
 			continue
 		}
 		dev := filepath.Join(path, "device")
@@ -137,11 +135,7 @@ func detectGPUs() []gpuCard {
 			continue
 		}
 
-		vendorID := readTrim(filepath.Join(dev, "vendor"))
-		driver := ""
-		if target, err := filepath.EvalSymlinks(filepath.Join(dev, "driver")); err == nil {
-			driver = filepath.Base(target)
-		}
+		vendor := vendorName(readTrim(filepath.Join(dev, "vendor")))
 		slot := normalizeSlot(readUevent(dev, "PCI_SLOT_NAME"))
 		if slot == "" {
 			// Last resort: the symlink target ends in the PCI address.
@@ -149,22 +143,27 @@ func detectGPUs() []gpuCard {
 				slot = normalizeSlot(filepath.Base(target))
 			}
 		}
-
-		vendor := vendorName(vendorID)
-		name := names[slot]
-		if name == "" {
-			name = vendor + " GPU"
-		}
-		cardInfo := gpuCard{
-			card:   card,
+		cards = append(cards, gpuCard{
 			dev:    dev,
 			vendor: vendor,
-			driver: driver,
 			slot:   slot,
-			name:   name,
+			name:   vendor + " GPU",
 			hwmon:  findGPUHardwareMonitor(dev, path),
+		})
+	}
+	if len(cards) == 0 {
+		// Avoid running lspci on machines without a DRM card.
+		return nil
+	}
+
+	names := lspciNames()
+	for i := range cards {
+		if cards[i].slot == "" {
+			continue
 		}
-		cards = append(cards, cardInfo)
+		if name := names[cards[i].slot]; name != "" {
+			cards[i].name = name
+		}
 	}
 	return cards
 }
@@ -227,7 +226,13 @@ func normalizeSlot(slot string) string {
 // nvidiaStats caches nvidia-smi output briefly so a fast refresh interval
 // does not spawn a process for every frame.
 func (c *Collector) nvidiaStats(now time.Time) []nvidiaStat {
-	if now.Sub(c.nvidiaAt) < 750*time.Millisecond {
+	ttl := 750 * time.Millisecond
+	if c.nvidiaFail {
+		// nvidia-smi can take its full two-second timeout on broken or
+		// half-installed drivers. Do not retry every frame in that case.
+		ttl = 30 * time.Second
+	}
+	if !c.nvidiaAt.IsZero() && now.Sub(c.nvidiaAt) < ttl {
 		return c.nvidia
 	}
 	c.nvidiaAt = now
@@ -238,31 +243,37 @@ func (c *Collector) nvidiaStats(now time.Time) []nvidiaStat {
 	out, err := exec.CommandContext(ctx, "nvidia-smi",
 		"--query-gpu="+nvidiaQuery, "--format=csv,noheader,nounits").Output()
 	if err != nil {
+		c.nvidiaFail = true
 		return nil
 	}
+	c.nvidiaFail = false
 	c.nvidia = parseNvidiaCSV(string(out))
 	return c.nvidia
 }
 
 func parseNvidiaCSV(out string) []nvidiaStat {
 	var stats []nvidiaStat
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Split(line, ",")
-		if len(fields) < 13 {
+	reader := csv.NewReader(strings.NewReader(out))
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
+	for {
+		fields, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil || len(fields) < 13 {
 			continue
 		}
 		for i := range fields {
 			fields[i] = strings.TrimSpace(fields[i])
 		}
-		idx, err := strconv.Atoi(fields[0])
-		if err != nil {
+		if _, err := strconv.Atoi(fields[0]); err != nil {
 			continue
 		}
 		n := nvidiaStat{
-			index:   idx,
-			name:    cleanText(fields[1]),
-			slot:    normalizeSlot(fields[2]),
-			memUsed: 0,
+			name: cleanText(fields[1]),
+			slot: normalizeSlot(fields[2]),
 		}
 		n.util, n.hasUtil = parseOptional(fields[3])
 		if mb, ok := parseOptional(fields[4]); ok {
@@ -598,10 +609,11 @@ func shortVendor(vendor string) string {
 	}
 }
 
-// cleanText removes control characters from vendor-provided strings.
+// cleanText removes control and formatting characters from vendor-provided
+// strings, including bidirectional overrides that could reorder the screen.
 func cleanText(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r

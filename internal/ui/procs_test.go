@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/metrics"
 )
 
 func testProcs() []metrics.Proc {

@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/config"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/metrics"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/config"
-	"github.com/tachtop/tachtop/internal/metrics"
-	"github.com/tachtop/tachtop/internal/theme"
 )
 
 func testGPUs() []metrics.GPU {
@@ -16,7 +16,9 @@ func testGPUs() []metrics.GPU {
 			Index: 0, Name: "NVIDIA GeForce RTX 5050 Laptop GPU", Vendor: "NVIDIA",
 			UtilPercent: 7, HasUtil: true, Temp: 55, HasTemp: true,
 			CoreMHz: 180, MaxCoreMHz: 3090,
-			MemUsed: 289 * 1024 * 1024, MemTotal: 8151 * 1024 * 1024, Power: 5.3,
+			MemMHz: 7001, MaxMemMHz: 7001,
+			MemUsed: 289 * 1024 * 1024, MemTotal: 8151 * 1024 * 1024,
+			Power: 5.3, PowerLimit: 100,
 		},
 		{
 			Index: 1, Name: "Intel Raptor Lake-P [Intel Graphics]", Vendor: "Intel",
@@ -47,8 +49,8 @@ func TestGPULineFits(t *testing.T) {
 
 func TestGPULineShowsDetails(t *testing.T) {
 	m := gpuTestModel()
-	wide := plain(m.gpuLine(m.snap.GPUs[0], 120))
-	for _, want := range []string{"7%", "55°C", "180/3090MHz", "VRAM", "5.3W"} {
+	wide := plain(m.gpuLine(m.snap.GPUs[0], 160))
+	for _, want := range []string{"7%", "55°C", "180/3090MHz", "MEM 7001MHz", "VRAM", "5.3W/100W"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide line missing %q: %q", want, wide)
 		}

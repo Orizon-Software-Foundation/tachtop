@@ -1,6 +1,9 @@
 package theme
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestGet(t *testing.T) {
 	if _, ok := Get("tachtop"); !ok {
@@ -28,8 +31,12 @@ func TestNamesAndAll(t *testing.T) {
 
 	all := All()
 	all[0].Name = "changed"
+	all[0].Ramp[0] = "#000000"
 	if Names()[0] != "tachtop" {
 		t.Error("All() should return a copy")
+	}
+	if got := RampColor(themes[0].Ramp, 0); got == "#000000" {
+		t.Error("All() should deep-copy Ramp")
 	}
 }
 
@@ -80,5 +87,8 @@ func TestRampColor(t *testing.T) {
 	}
 	if got := RampColor(th.Ramp, 2); got != th.Ramp[len(th.Ramp)-1] {
 		t.Errorf("RampColor high = %v", got)
+	}
+	if got := RampColor(th.Ramp, math.NaN()); got != th.Ramp[0] {
+		t.Errorf("RampColor NaN = %v", got)
 	}
 }

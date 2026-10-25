@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,9 +35,12 @@ type procSample struct {
 }
 
 // Collector keeps the previous counter values needed to turn cumulative
-// kernel counters into per-second rates. It is not safe for concurrent use;
-// tachtop calls it from a single background command at a time.
+// kernel counters into per-second rates. Collect and Reset are serialized by
+// an internal mutex, so the UI can reset while a snapshot is still in flight.
 type Collector struct {
+	mu           sync.Mutex
+	staticLoaded bool
+
 	hostname string
 	platform string
 	kernel   string
@@ -52,6 +57,7 @@ type Collector struct {
 	prevDiskWrite uint64
 	prevNet       map[string]netSample
 	prevProcs     map[int32]procSample
+	cpuValid      bool
 
 	phys   map[string]bool
 	physAt time.Time
@@ -61,26 +67,54 @@ type Collector struct {
 	mhz    float64
 	mhzAt  time.Time
 
-	gpuCards []gpuCard
-	gpuAt    time.Time
-	nvidia   []nvidiaStat
-	nvidiaAt time.Time
+	gpuCards   []gpuCard
+	gpuAt      time.Time
+	nvidia     []nvidiaStat
+	nvidiaAt   time.Time
+	nvidiaFail bool
 
 	users map[uint32]string
-
-	primed bool
 }
 
-// New creates a collector and primes the cumulative counters so the first
-// visible snapshot contains sensible rates instead of numbers measured since
-// boot.
+// New creates a collector and reads the static host and CPU information. The
+// first Collect establishes the rate baselines and runs the expensive probes;
+// doing that asynchronously keeps startup fast.
 func New() *Collector {
-	c := &Collector{
-		numCPU:    runtime.NumCPU(),
-		pageSize:  uint64(os.Getpagesize()),
-		prevNet:   make(map[string]netSample),
-		prevProcs: make(map[int32]procSample),
-		users:     make(map[uint32]string),
+	c := &Collector{}
+	c.mu.Lock()
+	c.initStatic()
+	c.mu.Unlock()
+
+	// Prime gopsutil's internal CPU baselines. Its first call always reports
+	// an error because there is no previous sample; the first visible Collect
+	// discards that near-zero measurement and then uses this baseline.
+	_, _ = cpu.Percent(0, false)
+	_, _ = cpu.Percent(0, true)
+	return c
+}
+
+// initStatic fills fields that never change for the lifetime of the process.
+// It is called with c.mu held.
+func (c *Collector) initStatic() {
+	if c.staticLoaded {
+		return
+	}
+	c.staticLoaded = true
+
+	if c.numCPU == 0 {
+		c.numCPU = runtime.NumCPU()
+	}
+	if c.pageSize == 0 {
+		c.pageSize = uint64(os.Getpagesize())
+	}
+	if c.prevNet == nil {
+		c.prevNet = make(map[string]netSample)
+	}
+	if c.prevProcs == nil {
+		c.prevProcs = make(map[int32]procSample)
+	}
+	if c.users == nil {
+		c.users = make(map[uint32]string)
 	}
 
 	if info, err := host.Info(); err == nil {
@@ -104,28 +138,53 @@ func New() *Collector {
 		c.cpuModel = infos[0].ModelName
 		c.baseMHz = infos[0].Mhz
 	}
-	c.primed = true
-	c.Collect()
-	return c
 }
 
 // Reset clears rate baselines. Calling this after a pause prevents the first
 // frame from showing an average over the whole paused period.
 func (c *Collector) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resetLocked()
+}
+
+// resetLocked clears the rate baselines. c.mu must be held.
+func (c *Collector) resetLocked() {
 	c.lastAt = time.Time{}
 	c.prevDiskRead = 0
 	c.prevDiskWrite = 0
 	c.prevNet = make(map[string]netSample)
 	c.prevProcs = make(map[int32]procSample)
+	c.cpuValid = false
+	c.tempAt = time.Time{}
+	c.mhzAt = time.Time{}
 }
 
 // Collect takes one snapshot. Errors are reported in Snapshot.Err; a partial
 // snapshot is still returned.
 func (c *Collector) Collect() Snapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.collectLocked()
+}
+
+// CollectAfterReset clears the baselines and takes a snapshot as one atomic
+// operation, so a concurrent collection cannot slip between the two steps.
+func (c *Collector) CollectAfterReset() Snapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resetLocked()
+	return c.collectLocked()
+}
+
+// collectLocked takes one snapshot. c.mu must be held.
+func (c *Collector) collectLocked() Snapshot {
+	c.initStatic()
+
 	now := time.Now()
 	first := c.lastAt.IsZero()
 	dt := now.Sub(c.lastAt).Seconds()
-	if dt <= 0 {
+	if first || dt <= 0 {
 		dt = 1
 	}
 
@@ -149,17 +208,27 @@ func (c *Collector) Collect() Snapshot {
 
 	// CPU usage. gopsutil keeps its own previous counters per call pattern,
 	// so asking for overall and per-core values in that order stays accurate.
-	if p, err := cpu.Percent(0, false); err != nil {
-		errs = append(errs, "cpu: "+err.Error())
-	} else if len(p) > 0 {
-		s.CPUPercent = clamp(p[0], 0, 100)
-	}
-	if p, err := cpu.Percent(0, true); err == nil {
-		s.CorePercents = make([]float64, len(p))
-		for i, v := range p {
-			s.CorePercents[i] = clamp(v, 0, 100)
+	// The first sample after New or Reset is discarded: it only covers the few
+	// milliseconds since the baseline was taken, and reporting it would show a
+	// meaningless spike (or an average over the pause).
+	cpuP, cpuErr := cpu.Percent(0, false)
+	coreP, coreErr := cpu.Percent(0, true)
+	if c.cpuValid {
+		if cpuErr != nil {
+			errs = append(errs, "cpu: "+cpuErr.Error())
+		} else if len(cpuP) > 0 {
+			s.CPUPercent = clamp(cpuP[0], 0, 100)
+		}
+		if coreErr != nil {
+			errs = append(errs, "cpu cores: "+coreErr.Error())
+		} else {
+			s.CorePercents = make([]float64, len(coreP))
+			for i, v := range coreP {
+				s.CorePercents[i] = clamp(v, 0, 100)
+			}
 		}
 	}
+	c.cpuValid = true
 
 	if vm, err := mem.VirtualMemory(); err != nil {
 		errs = append(errs, "memory: "+err.Error())
@@ -169,7 +238,6 @@ func (c *Collector) Collect() Snapshot {
 		s.MemAvailable = vm.Available
 		s.MemFree = vm.Free
 		s.MemCached = vm.Cached
-		s.MemBuffers = vm.Buffers
 	}
 	if sw, err := mem.SwapMemory(); err == nil {
 		s.SwapTotal = sw.Total
@@ -206,7 +274,7 @@ func (c *Collector) collectNet(dt float64, first bool) ([]Network, float64, floa
 
 	next := make(map[string]netSample, len(counters))
 	out := make([]Network, 0, len(counters))
-	var totalRx, totalTx float64
+	rates := make(map[string][2]float64, len(counters))
 
 	for _, n := range counters {
 		// Loopback traffic is local and would double-count ordinary usage.
@@ -214,9 +282,6 @@ func (c *Collector) collectNet(dt float64, first bool) ([]Network, float64, floa
 			continue
 		}
 		next[n.Name] = netSample{rx: n.BytesRecv, tx: n.BytesSent}
-		if n.BytesRecv == 0 && n.BytesSent == 0 {
-			continue
-		}
 
 		var rx, tx float64
 		if prev, ok := c.prevNet[n.Name]; ok && !first && dt > 0 {
@@ -227,47 +292,125 @@ func (c *Collector) collectNet(dt float64, first bool) ([]Network, float64, floa
 				tx = float64(n.BytesSent-prev.tx) / dt
 			}
 		}
-		totalRx += rx
-		totalTx += tx
-		out = append(out, Network{
-			Name:    n.Name,
-			Rx:      rx,
-			Tx:      tx,
-			RxTotal: n.BytesRecv,
-			TxTotal: n.BytesSent,
-		})
+		rates[n.Name] = [2]float64{rx, tx}
+		if n.BytesRecv == 0 && n.BytesSent == 0 {
+			continue
+		}
+		out = append(out, Network{Name: n.Name, Rx: rx, Tx: tx})
 	}
 	c.prevNet = next
 
+	// The headline total follows the default route. Summing every interface
+	// counts the same bytes twice on bridges, bonds, VPNs and container
+	// veth pairs; following the route the kernel actually uses avoids that.
+	defaults := defaultRouteInterfaces()
+	var totalRx, totalTx float64
+	counted := false
+	for name := range defaults {
+		if r, ok := rates[name]; ok {
+			totalRx += r[0]
+			totalTx += r[1]
+			counted = true
+		}
+	}
+	if !counted {
+		for _, n := range out {
+			totalRx += n.Rx
+			totalTx += n.Tx
+		}
+	}
+
+	// A stable order stops the interface rows from jumping every refresh.
 	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Rx+out[i].Tx > out[j].Rx+out[j].Tx
+		return out[i].Name < out[j].Name
 	})
 	return out, totalRx, totalTx
+}
+
+// defaultRouteInterfaces returns the interfaces that carry a default route.
+// /proc/net/route lists destinations in little-endian hex; 00000000 is the
+// default route. Multiple names are possible with policy routing.
+func defaultRouteInterfaces() map[string]bool {
+	data, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return nil
+	}
+	return parseDefaultRoutes(string(data))
+}
+
+func parseDefaultRoutes(data string) map[string]bool {
+	out := make(map[string]bool)
+	for i, line := range strings.Split(data, "\n") {
+		if i == 0 {
+			continue // header
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[1] != "00000000" {
+			continue
+		}
+		out[fields[0]] = true
+	}
+	return out
 }
 
 var pseudoFilesystems = map[string]bool{
 	"autofs": true, "binfmt_misc": true, "bpf": true, "cgroup": true,
 	"cgroup2": true, "configfs": true, "debugfs": true, "devfs": true,
-	"devpts": true, "devtmpfs": true, "fusectl": true, "hugetlbfs": true,
-	"iso9660": true, "mqueue": true, "nsfs": true, "overlay": true,
+	"devpts": true, "devtmpfs": true, "efivarfs": true, "fusectl": true,
+	"hugetlbfs": true, "iso9660": true, "mqueue": true, "nsfs": true,
 	"proc": true, "pstore": true, "ramfs": true, "securityfs": true,
 	"squashfs": true, "sysfs": true, "tmpfs": true, "tracefs": true,
 }
 
+// isPseudoFilesystem reports whether a filesystem should stay out of the disk
+// panel. Network filesystems are excluded as well: statfs on them can block
+// the whole collection.
+func isPseudoFilesystem(fstype string) bool {
+	fs := strings.ToLower(strings.TrimSpace(fstype))
+	if pseudoFilesystems[fs] {
+		return true
+	}
+	for _, prefix := range []string{
+		"fuse.", "nfs", "cifs", "9p", "ceph", "rpc_pipefs", "selinuxfs", "binder",
+	} {
+		if strings.HasPrefix(fs, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Collector) collectDisks() []Disk {
 	parts, err := disk.Partitions(false)
+	if err == nil {
+		if out := c.disksFromPartitions(parts); len(out) > 0 {
+			return out
+		}
+	}
+	// Containers often only expose an overlay root, which gopsutil's
+	// physical-only mode skips. Retry with every mount and filter pseudo
+	// filesystems and bind-mounted files in disksFromPartitions.
+	parts, err = disk.Partitions(true)
 	if err != nil {
 		return nil
 	}
+	return c.disksFromPartitions(parts)
+}
 
+func (c *Collector) disksFromPartitions(parts []disk.PartitionStat) []Disk {
 	// Bind mounts and btrfs subvolumes share a device and therefore report the
 	// same usage. Keep the most useful mountpoint for each device.
 	chosen := make(map[string]disk.PartitionStat)
 	for _, part := range parts {
-		if part.Mountpoint == "" || pseudoFilesystems[strings.ToLower(part.Fstype)] ||
+		if part.Mountpoint == "" || isPseudoFilesystem(part.Fstype) ||
 			strings.HasPrefix(part.Mountpoint, "/snap/") ||
 			strings.HasPrefix(part.Mountpoint, "/var/lib/docker/") ||
 			strings.HasPrefix(part.Mountpoint, "/var/lib/containers/") {
+			continue
+		}
+		// In containers /etc/hosts, /etc/hostname and /etc/resolv.conf are
+		// bind-mounted files. They would report the host filesystem's usage.
+		if info, err := os.Stat(part.Mountpoint); err != nil || !info.IsDir() {
 			continue
 		}
 		key := part.Device
@@ -287,11 +430,8 @@ func (c *Collector) collectDisks() []Disk {
 		}
 		out = append(out, Disk{
 			Mount:       part.Mountpoint,
-			Device:      part.Device,
-			FSType:      part.Fstype,
 			Total:       usage.Total,
 			Used:        usage.Used,
-			Free:        usage.Free,
 			UsedPercent: clamp(usage.UsedPercent, 0, 100),
 		})
 	}
@@ -506,6 +646,9 @@ func Details(pid int32) ProcDetails {
 
 // Signal sends SIGTERM, or SIGKILL when force is true.
 func Signal(pid int32, force bool) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
 	sig := syscall.SIGTERM
 	if force {
 		sig = syscall.SIGKILL
@@ -513,7 +656,32 @@ func Signal(pid int32, force bool) error {
 	return syscall.Kill(int(pid), sig)
 }
 
+// SignalChecked sends a signal only if the process still has the expected
+// start time. This closes the window between showing the confirmation prompt
+// and delivering the signal, during which the PID could have been reused.
+func (c *Collector) SignalChecked(pid int32, expectedStart int64, force bool) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid pid %d", pid)
+	}
+	if expectedStart > 0 {
+		ps, err := readProcStat(pid)
+		if err != nil {
+			return fmt.Errorf("process %d is no longer running", pid)
+		}
+		if boot, err := host.BootTime(); err == nil && boot > 0 {
+			started := int64(boot) + int64(float64(ps.startTicks)/userHZ)
+			if started != expectedStart {
+				return fmt.Errorf("process %d was replaced", pid)
+			}
+		}
+	}
+	return Signal(pid, force)
+}
+
 func clamp(v, lo, hi float64) float64 {
+	if math.IsNaN(v) {
+		return lo
+	}
 	if v < lo {
 		return lo
 	}

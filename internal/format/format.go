@@ -1,5 +1,5 @@
-// Package format provides small, dependency-free helpers for turning raw
-// numbers into the short strings shown in the user interface.
+// Package format provides small helpers for turning raw numbers and text into
+// the short strings shown in the user interface.
 package format
 
 import (
@@ -7,6 +7,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 )
 
 var byteUnits = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
@@ -63,23 +65,6 @@ func human(v float64, units []string, suffix string) string {
 	return fmt.Sprintf("%.0f %s%s", v, units[i], suffix)
 }
 
-// Percent formats a percentage with one decimal place.
-func Percent(p float64) string {
-	if math.IsNaN(p) || math.IsInf(p, 0) {
-		p = 0
-	}
-	return fmt.Sprintf("%.1f%%", p)
-}
-
-// PercentWhole formats a percentage without decimals, which keeps per-core
-// gauges compact.
-func PercentWhole(p float64) string {
-	if math.IsNaN(p) || math.IsInf(p, 0) {
-		p = 0
-	}
-	return fmt.Sprintf("%.0f%%", p)
-}
-
 // Duration formats a number of seconds as a short uptime-style duration.
 func Duration(seconds uint64) string {
 	d := time.Duration(seconds) * time.Second
@@ -120,8 +105,10 @@ func DurationShort(d time.Duration) string {
 }
 
 // Temperature formats a Celsius value. Fahrenheit is used when unit is "f".
+// Values outside the range a machine sensor can plausibly report are shown as
+// an en dash; zero and negative readings are valid and are formatted normally.
 func Temperature(celsius float64, unit string) string {
-	if celsius <= 0 || celsius > 150 {
+	if math.IsNaN(celsius) || math.IsInf(celsius, 0) || celsius < -100 || celsius > 150 {
 		return "–"
 	}
 	if strings.EqualFold(unit, "f") {
@@ -130,30 +117,10 @@ func Temperature(celsius float64, unit string) string {
 	return fmt.Sprintf("%.0f°C", celsius)
 }
 
-// Load formats a load average without trailing zeros getting out of hand.
-func Load(v float64) string {
-	return fmt.Sprintf("%.2f", v)
-}
-
-// Truncate shortens s to at most width characters, adding an ellipsis when
-// something was removed. It is rune-aware and not ANSI-aware; use the UI's
-// ANSI-aware helpers for styled strings.
-func Truncate(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	if len([]rune(s)) <= width {
-		return s
-	}
-	if width == 1 {
-		return "…"
-	}
-	r := []rune(s)
-	return string(r[:width-1]) + "…"
-}
-
-// Wrap breaks plain text into lines of at most width cells. It understands
-// words and hard-wraps words that are longer than a line.
+// Wrap breaks plain text into lines of at most width terminal cells. It
+// understands words and hard-wraps words that are longer than a line. Wide
+// runes (CJK, emoji) count as two cells, matching how the terminal renders
+// them.
 func Wrap(s string, width int) []string {
 	if width <= 0 {
 		return nil
@@ -167,22 +134,24 @@ func Wrap(s string, width int) []string {
 		}
 		line := ""
 		for _, w := range words {
-			if len([]rune(w)) > width {
+			wordWidth := runewidth.StringWidth(w)
+			if wordWidth > width {
 				if line != "" {
 					lines = append(lines, line)
 					line = ""
 				}
-				r := []rune(w)
-				for len(r) > width {
-					lines = append(lines, string(r[:width]))
-					r = r[width:]
+				for wordWidth > width {
+					cut, used := cutCells(w, width)
+					lines = append(lines, cut)
+					w = w[len(cut):]
+					wordWidth -= used
 				}
-				line = string(r)
+				line = w
 				continue
 			}
 			if line == "" {
 				line = w
-			} else if len([]rune(line))+1+len([]rune(w)) <= width {
+			} else if runewidth.StringWidth(line)+1+wordWidth <= width {
 				line += " " + w
 			} else {
 				lines = append(lines, line)
@@ -194,4 +163,24 @@ func Wrap(s string, width int) []string {
 		}
 	}
 	return lines
+}
+
+// cutCells returns the longest prefix of s that fits in width cells and the
+// number of cells it occupies. A single wide rune is always returned even
+// when it is wider than width, so callers make progress.
+func cutCells(s string, width int) (string, int) {
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if used+rw > width && b.Len() > 0 {
+			break
+		}
+		b.WriteRune(r)
+		used += rw
+		if used >= width {
+			break
+		}
+	}
+	return b.String(), used
 }

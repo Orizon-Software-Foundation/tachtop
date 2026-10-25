@@ -2,14 +2,15 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Orizon-Software-Foundation/tachtop/internal/config"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/format"
+	"github.com/Orizon-Software-Foundation/tachtop/internal/theme"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/tachtop/tachtop/internal/config"
-	"github.com/tachtop/tachtop/internal/format"
-	"github.com/tachtop/tachtop/internal/theme"
 )
 
 // View renders the whole screen.
@@ -18,10 +19,10 @@ func (m Model) View() string {
 		return "Starting tachtop…"
 	}
 	if m.width < 20 || m.height < 6 {
-		return "tachtop: terminal too small"
+		return truncate("tachtop: terminal too small", m.width)
 	}
 	if m.layout().tooSmall {
-		return m.tooSmallView()
+		return m.clampScreen(m.tooSmallView())
 	}
 
 	header := m.headerLine()
@@ -141,7 +142,7 @@ func (m Model) footerLine() string {
 		right = m.dimText("tachtop " + m.version)
 
 	case m.detailsOpen:
-		left = m.dimText("esc or q closes details")
+		left = m.dimText("esc or q closes details · ↑↓ scroll")
 		right = m.dimText(fmt.Sprintf("PID %d", m.detailsPID))
 
 	case m.toast != "":
@@ -161,8 +162,8 @@ func (m Model) footerLine() string {
 		if m.paused {
 			right = m.warnText("PAUSED")
 		}
-		if m.snapErr != "" {
-			errText := m.warnText("! " + clean(m.snapErr))
+		if m.snap.Err != "" {
+			errText := m.warnText("! " + clean(m.snap.Err))
 			if lipgloss.Width(errText) > m.width/2 {
 				errText = truncate(errText, maxInt(8, m.width/2))
 			}
@@ -389,7 +390,7 @@ func (m Model) memLines(w, h int) []string {
 }
 
 func clampPct(v float64) float64 {
-	if v < 0 {
+	if math.IsNaN(v) || v < 0 {
 		return 0
 	}
 	if v > 100 {
@@ -503,6 +504,13 @@ func (m Model) helpPanel() string {
 	if version == "" {
 		version = "dev"
 	}
+	cfgPath := m.cfgPath
+	if cfgPath == "" {
+		cfgPath = config.Path()
+	}
+	if cfgPath == "" {
+		cfgPath = "(not found)"
+	}
 	lines := []string{
 		m.accentBold().Render("tachtop " + version + " — live system monitor"),
 		m.dimText("KEYS"),
@@ -514,13 +522,14 @@ func (m Model) helpPanel() string {
 		m.helpLine("c / esc", "clear the filter"),
 		m.helpLine("s / r", "cycle sort / reverse order"),
 		m.helpLine("enter", "show process details"),
+		m.helpLine("↑ ↓", "scroll details (PgUp/PgDn)"),
 		m.helpLine("k", "terminate process (y, Y = force)"),
 		m.helpLine("p", "pause / resume updates"),
 		m.helpLine("?", "open / close this help"),
 		"",
 		m.dimText("ABOUT"),
 		"  Data: /proc, /sys and vendor tools. No daemon or root.",
-		"  Config (optional): " + m.dimText(config.Path()),
+		"  Config (optional): " + m.dimText(cfgPath),
 		"  Themes: " + strings.Join(theme.Names(), ", "),
 	}
 	return m.panel("HELP", m.width, bodyH, lines)
@@ -536,7 +545,39 @@ func (m Model) detailsPanel() string {
 	if m.details != nil && m.details.Name != "" {
 		title = fmt.Sprintf("PROCESS %d · %s", m.detailsPID, truncate(clean(m.details.Name), 40))
 	}
-	return m.panel(title, m.width, bodyH, m.detailsLines(m.width, bodyH))
+	lines := m.detailsLines(m.width, bodyH)
+	innerH := bodyH - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+	maxOffset := len(lines) - innerH
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	offset := clampInt(m.detailsOffset, 0, maxOffset)
+	if offset > 0 {
+		lines = lines[offset:]
+	}
+	return m.panel(title, m.width, bodyH, lines)
+}
+
+// detailsPage is the number of content rows visible in the details panel.
+func (m Model) detailsPage() int {
+	rows := m.height - 4 // header, footer and panel borders
+	if rows < 1 {
+		return 1
+	}
+	return rows
+}
+
+// scrollDetails moves the details viewport, clamping it to the content.
+func (m *Model) scrollDetails(delta int) {
+	lines := m.detailsLines(m.width, m.height-2)
+	maxOffset := len(lines) - m.detailsPage()
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	m.detailsOffset = clampInt(m.detailsOffset+delta, 0, maxOffset)
 }
 
 func (m Model) detailsLines(w, h int) []string {

@@ -5,6 +5,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,7 +73,9 @@ func Load(path string) (Config, string, error) {
 	if err != nil {
 		return cfg, path, err
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
 		return Default(), path, fmt.Errorf("parse %s: %w", path, err)
 	}
 	cfg.normalize()
@@ -80,6 +83,7 @@ func Load(path string) (Config, string, error) {
 }
 
 func (c *Config) normalize() {
+	c.Theme = strings.TrimSpace(c.Theme)
 	if c.Theme == "" {
 		c.Theme = "tachtop"
 	}
@@ -92,7 +96,7 @@ func (c *Config) normalize() {
 	if c.RefreshMS > MaxRefreshMS {
 		c.RefreshMS = MaxRefreshMS
 	}
-	c.TempUnit = strings.ToLower(c.TempUnit)
+	c.TempUnit = strings.ToLower(strings.TrimSpace(c.TempUnit))
 	if c.TempUnit != "f" {
 		c.TempUnit = "c"
 	}

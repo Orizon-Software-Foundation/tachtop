@@ -15,7 +15,7 @@ func TestParseNvidiaCSV(t *testing.T) {
 		t.Fatalf("got %d stats", len(stats))
 	}
 	g := stats[0]
-	if g.index != 0 || g.name != "NVIDIA GeForce RTX 5050 Laptop GPU" || g.slot != "0:01:00.0" {
+	if g.name != "NVIDIA GeForce RTX 5050 Laptop GPU" || g.slot != "0:01:00.0" {
 		t.Fatalf("unexpected first row: %+v", g)
 	}
 	if !g.hasUtil || g.util != 7 {
@@ -32,6 +32,20 @@ func TestParseNvidiaCSV(t *testing.T) {
 	}
 	if stats[1].hasUtil || stats[1].hasTemp || stats[1].memTotal != 0 {
 		t.Errorf("N/A fields should be unavailable: %+v", stats[1])
+	}
+}
+
+func TestParseNvidiaCSVQuotedName(t *testing.T) {
+	out := "0, \"NVIDIA, Test GPU\", 00000000:01:00.0, 7, 289, 8151, 55, 180, 3090, 405, 7001, 5.28, 100\n"
+	stats := parseNvidiaCSV(out)
+	if len(stats) != 1 {
+		t.Fatalf("got %d stats", len(stats))
+	}
+	if stats[0].name != "NVIDIA, Test GPU" {
+		t.Fatalf("name = %q", stats[0].name)
+	}
+	if stats[0].limit != 100 {
+		t.Fatalf("limit = %v", stats[0].limit)
 	}
 }
 
@@ -105,8 +119,8 @@ func TestCollectGPUsLive(t *testing.T) {
 		t.Skip("no GPUs detected")
 	}
 	for _, g := range gpus {
-		t.Logf("#%d %s vendor=%s driver=%s slot=%s util=%.0f(%v) temp=%.0f(%v) clock=%.0f/%.0f vram=%d/%d",
-			g.Index, g.Name, g.Vendor, g.Driver, g.PCISlot,
+		t.Logf("#%d %s vendor=%s util=%.0f(%v) temp=%.0f(%v) clock=%.0f/%.0f vram=%d/%d",
+			g.Index, g.Name, g.Vendor,
 			g.UtilPercent, g.HasUtil, g.Temp, g.HasTemp, g.CoreMHz, g.MaxCoreMHz,
 			g.MemUsed, g.MemTotal)
 		if g.Name == "" {

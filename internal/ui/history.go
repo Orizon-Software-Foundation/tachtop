@@ -1,5 +1,7 @@
 package ui
 
+import "math"
+
 // series is a fixed-size history buffer. Values are stored oldest first.
 type series struct {
 	limit  int
@@ -14,7 +16,7 @@ func newSeries(limit int) series {
 }
 
 func (s *series) add(v float64) {
-	if v < 0 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
 		v = 0
 	}
 	if len(s.values) < s.limit {
@@ -27,11 +29,4 @@ func (s *series) add(v float64) {
 
 func (s series) data() []float64 {
 	return s.values
-}
-
-func (s series) latest() float64 {
-	if len(s.values) == 0 {
-		return 0
-	}
-	return s.values[len(s.values)-1]
 }
