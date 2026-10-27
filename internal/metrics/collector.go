@@ -26,6 +26,8 @@ import (
 
 const userHZ = 100.0 // Linux exposes CPU times in USER_HZ (always 100).
 
+const routeCacheTTL = 30 * time.Second
+
 type netSample struct {
 	rx, tx uint64
 }
@@ -59,6 +61,9 @@ type Collector struct {
 	prevNet       map[string]netSample
 	prevProcs     map[int32]procSample
 	cpuValid      bool
+
+	defaultRouteIfaces map[string]bool
+	defaultRouteAt     time.Time
 
 	phys   map[string]bool
 	physAt time.Time
@@ -327,7 +332,7 @@ func (c *Collector) collectNet(dt float64, first bool) ([]Network, float64, floa
 	// The headline total follows the default route. Summing every interface
 	// counts the same bytes twice on bridges, bonds, VPNs and container
 	// veth pairs; following the route the kernel actually uses avoids that.
-	defaults := defaultRouteInterfaces()
+	defaults := c.defaultRouteInterfaces()
 	var totalRx, totalTx float64
 	counted := false
 	for name := range defaults {
@@ -378,12 +383,19 @@ func interfaceFlags(f net.Flags) string {
 // defaultRouteInterfaces returns the interfaces that carry a default route.
 // /proc/net/route lists destinations in little-endian hex; 00000000 is the
 // default route. Multiple names are possible with policy routing.
-func defaultRouteInterfaces() map[string]bool {
+func (c *Collector) defaultRouteInterfaces() map[string]bool {
+	if !c.defaultRouteAt.IsZero() && time.Since(c.defaultRouteAt) < routeCacheTTL {
+		return c.defaultRouteIfaces
+	}
 	data, err := os.ReadFile("/proc/net/route")
 	if err != nil {
+		c.defaultRouteIfaces = nil
+		c.defaultRouteAt = time.Now()
 		return nil
 	}
-	return parseDefaultRoutes(string(data))
+	c.defaultRouteIfaces = parseDefaultRoutes(string(data))
+	c.defaultRouteAt = time.Now()
+	return c.defaultRouteIfaces
 }
 
 func parseDefaultRoutes(data string) map[string]bool {
