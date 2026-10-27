@@ -1,13 +1,3 @@
-# tachtop — a fast, friendly terminal system monitor for Linux.
-#
-# Common targets:
-#   make            build ./tachtop
-#   make run        build and run
-#   make test       run the test suite
-#   make install    install the binary under /usr/local/bin
-#   make install-desktop
-#                   also install the application launcher
-
 BINARY  := tachtop
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
 PREFIX  ?= /usr/local
