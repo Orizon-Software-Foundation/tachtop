@@ -265,6 +265,7 @@ func (m Model) applySnapshot(snap metrics.Snapshot) (tea.Model, tea.Cmd) {
 	m.histDisk.add(snap.DiskRead + snap.DiskWrite)
 
 	// Per-interface rate history for the detailed network panel.
+	seen := make(map[string]bool, len(snap.Networks))
 	for _, n := range snap.Networks {
 		h, ok := m.netHist[n.Name]
 		if !ok {
@@ -272,6 +273,12 @@ func (m Model) applySnapshot(snap metrics.Snapshot) (tea.Model, tea.Cmd) {
 			m.netHist[n.Name] = h
 		}
 		h.add(n.Rx + n.Tx)
+		seen[n.Name] = true
+	}
+	for name := range m.netHist {
+		if !seen[name] {
+			delete(m.netHist, name)
+		}
 	}
 
 	m.reconcileSelection()
